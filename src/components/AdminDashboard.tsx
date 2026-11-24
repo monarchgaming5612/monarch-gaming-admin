@@ -21,6 +21,11 @@ import {
   X,
 } from 'lucide-react';
 import {
+  onAuthStateChanged,
+  signInWithPopup,
+  signOut,
+} from 'firebase/auth';
+import {
   sanitizeExternalUrl,
   type FeaturedGame,
   type MediaType,
@@ -32,19 +37,31 @@ import {
   deleteBlobFromIndexedDb,
   getLocalAdminAuthStatus,
   loginLocalAdmin,
+  normalizeSiteConfig,
   saveSiteConfig,
   storeBrowserMedia,
 } from '../data/localStore';
 import {
+  fetchSiteConfigFromSupabase,
   saveSiteConfigToSupabase,
   uploadMediaToSupabaseStorage,
 } from '../data/supabaseClient';
+import { auth, googleAuthProvider } from '../lib/firebase';
 import {
   GameThumbnailArt,
   MonarchCrownLogo,
   SocialGlyph,
   useResolvedMediaUrl,
 } from './GameArtwork';
+
+async function readFileAsBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.onerror = () => reject(new Error('Failed to read selected file.'));
+    reader.readAsDataURL(file);
+  });
+}
 
 type BottomTab = 'about' | 'social' | 'stats';
 
@@ -158,6 +175,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 }) => {
   const initialAuth = getLocalAdminAuthStatus();
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
+  const [authMode, setAuthMode] = useState<'firebase' | 'local'>('firebase');
+  const [firebaseIdToken, setFirebaseIdToken] = useState<string | null>(null);
+  const [googleSigningIn, setGoogleSigningIn] = useState<boolean>(false);
+  const [showLocalFallback, setShowLocalFallback] = useState<boolean>(false);
   const [adminEmail, setAdminEmail] = useState<string>(initialAuth.configuredEmail);
   const [needsSetup, setNeedsSetup] = useState<boolean>(initialAuth.needsSetup);
 
@@ -185,6 +206,27 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     const status = getLocalAdminAuthStatus();
     setNeedsSetup(status.needsSetup);
     setEmailInput(status.configuredEmail);
+
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+      if (!user) return;
+      try {
+        const token = await user.getIdToken();
+        const res = await fetch('/api/admin/me', {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (res.ok) {
+          const data = (await res.json()) as { email?: string };
+          setFirebaseIdToken(token);
+          setAuthMode('firebase');
+          setIsAuthenticated(true);
+          setAdminEmail(data.email || user.email || ADMIN_EMAIL);
+        }
+      } catch {
+        // Ignore silent check errors; user can sign in interactively
+      }
+    });
+
+    return () => unsubscribe();
   }, []);
 
   useEffect(() => {
@@ -198,6 +240,75 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     window.setTimeout(() => {
       setStatusBanner((prev) => (prev?.text === text ? null : prev));
     }, 4000);
+  };
+
+  const getFreshFirebaseToken = async (): Promise<string | null> => {
+    if (auth.currentUser) {
+      const fresh = await auth.currentUser.getIdToken();
+      setFirebaseIdToken(fresh);
+      return fresh;
+    }
+    return firebaseIdToken;
+  };
+
+  const handleGoogleSignIn = async () => {
+    setAuthError(null);
+    setGoogleSigningIn(true);
+    try {
+      const cred = await signInWithPopup(auth, googleAuthProvider);
+      const token = await cred.user.getIdToken();
+
+      const res = await fetch('/api/admin/me', {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      const contentType = res.headers.get('content-type') || '';
+      if (!contentType.includes('application/json')) {
+        setShowLocalFallback(true);
+        setAuthError(
+          'Backend API is not active on this host. Use the local/static admin sign-in below.'
+        );
+        return;
+      }
+
+      if (res.status === 403) {
+        const body = (await res.json()) as { error?: string };
+        await signOut(auth);
+        setAuthError(
+          body.error || 'This Google account is not authorized for admin access.'
+        );
+        return;
+      }
+
+      if (!res.ok) {
+        const body = (await res.json()) as { error?: string };
+        setAuthError(body.error || 'Unable to verify Google sign-in.');
+        return;
+      }
+
+      const meData = (await res.json()) as { email?: string };
+      setFirebaseIdToken(token);
+      setAuthMode('firebase');
+      setIsAuthenticated(true);
+      setAdminEmail(meData.email || cred.user.email || ADMIN_EMAIL);
+
+      const configRes = await fetch('/api/config');
+      if (configRes.ok) {
+        const remote = (await configRes.json()) as Partial<SiteConfig>;
+        const normalized = normalizeSiteConfig(remote);
+        setDraft(structuredClone(normalized));
+        saveSiteConfig(normalized);
+        onConfigUpdated(normalized);
+      }
+    } catch (err) {
+      const message =
+        err instanceof Error && err.message.includes('popup-closed-by-user')
+          ? 'Google sign-in popup was closed before completing.'
+          : 'Google sign-in failed. Please try again.';
+      setAuthError(message);
+    } finally {
+      setGoogleSigningIn(false);
+    }
   };
 
   const handleAuthSubmit = async (e: React.FormEvent) => {
@@ -220,11 +331,19 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         return;
       }
 
+      setAuthMode('local');
       setIsAuthenticated(true);
       setAdminEmail(result.email);
       setNeedsSetup(false);
       setPasswordInput('');
       setConfirmPasswordInput('');
+
+      fetchSiteConfigFromSupabase().then((remoteConfig) => {
+        if (remoteConfig) {
+          setDraft(structuredClone(remoteConfig));
+          onConfigUpdated(remoteConfig);
+        }
+      });
     } catch {
       setAuthError('Unable to verify admin credentials in browser storage.');
     } finally {
@@ -240,6 +359,46 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     if (!isAuthenticated) return false;
     setSavingSection(section);
     try {
+      if (authMode === 'firebase') {
+        const token = await getFreshFirebaseToken();
+        if (!token) {
+          setIsAuthenticated(false);
+          setAuthError('Session expired. Please sign in again with Google.');
+          return false;
+        }
+
+        const res = await fetch('/api/admin/config', {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify(nextConfig),
+        });
+
+        const data = (await res.json()) as SiteConfig & { error?: string };
+        if (!res.ok) {
+          if (res.status === 401) {
+            setIsAuthenticated(false);
+            setFirebaseIdToken(null);
+            setAuthError('Session expired. Please sign in again.');
+          } else {
+            showStatus('error', data.error || 'Failed to save changes.');
+          }
+          return false;
+        }
+
+        const saved = saveSiteConfig(data);
+        setDraft(structuredClone(saved));
+        onConfigUpdated(saved);
+        if (section === 'cards' || section === 'all') setCardsDirty(false);
+        if (section === 'about' || section === 'all') setAboutDirty(false);
+        if (section === 'social' || section === 'all') setSocialDirty(false);
+        if (section === 'stats' || section === 'all') setStatsDirty(false);
+        showStatus('success', `${successMessage} Saved live to Cloud SQL.`);
+        return true;
+      }
+
       const saved = saveSiteConfig(nextConfig);
       setDraft(structuredClone(saved));
       onConfigUpdated(saved);
@@ -259,10 +418,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       }
       return true;
     } catch {
-      showStatus(
-        'error',
-        'Browser storage quota reached. Try removing unused media or using a smaller file.'
-      );
+      showStatus('error', 'Unable to save configuration.');
       return false;
     } finally {
       setSavingSection(null);
@@ -303,10 +459,36 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       const uploadedUrls: string[] = [];
 
       for (const file of validFiles) {
-        const remoteUrl = await uploadMediaToSupabaseStorage(file);
-        const storedUrl = remoteUrl || (await storeBrowserMedia(file, kind));
-        if (storedUrl) {
-          uploadedUrls.push(storedUrl);
+        if (authMode === 'firebase') {
+          const token = await getFreshFirebaseToken();
+          if (!token) {
+            setIsAuthenticated(false);
+            return;
+          }
+          const dataBase64 = await readFileAsBase64(file);
+          const res = await fetch('/api/admin/upload', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${token}`,
+            },
+            body: JSON.stringify({
+              mimeType: file.type,
+              dataBase64,
+            }),
+          });
+          const data = (await res.json()) as { mediaUrl?: string; error?: string };
+          if (!res.ok || !data.mediaUrl) {
+            showStatus('error', data.error || `Failed to upload ${file.name}.`);
+            continue;
+          }
+          uploadedUrls.push(data.mediaUrl);
+        } else {
+          const remoteUrl = await uploadMediaToSupabaseStorage(file);
+          const storedUrl = remoteUrl || (await storeBrowserMedia(file, kind));
+          if (storedUrl) {
+            uploadedUrls.push(storedUrl);
+          }
         }
       }
 
@@ -337,7 +519,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         `${uploadedUrls.length} ${kind === 'image' ? 'photo' : 'video'}${uploadedUrls.length > 1 ? 's' : ''} saved & published to ${targetGame.title}.`
       );
     } catch {
-      showStatus('error', 'Failed to save media to browser storage.');
+      showStatus('error', 'Failed to upload selected media.');
     } finally {
       setUploadingKey(null);
     }
@@ -480,111 +662,145 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 </div>
               </div>
 
-              <form onSubmit={handleAuthSubmit} className="space-y-4">
-                {needsSetup && (
-                  <div className="rounded-xl bg-[#1D1333] border border-[#8B5CF6]/50 p-3 text-xs text-slate-200 leading-relaxed">
-                    Enter your admin password for{' '}
-                    <strong className="text-[#F6C866]">{ADMIN_EMAIL}</strong> to lock and initialize the Admin Dashboard in this browser.
+              <div className="space-y-4">
+                <button
+                  type="button"
+                  onClick={handleGoogleSignIn}
+                  disabled={googleSigningIn}
+                  className="w-full min-h-[46px] rounded-xl bg-gradient-to-b from-[#FCE18D] to-[#DC9A2E] text-[#171122] font-extrabold text-sm flex items-center justify-center gap-2.5 hover:brightness-105 disabled:opacity-60 cursor-pointer shadow-[0_6px_20px_rgba(244,200,103,0.22)]"
+                >
+                  <ShieldCheck className="w-4 h-4" />
+                  <span>
+                    {googleSigningIn ? 'Signing in...' : 'Sign in with Google'}
+                  </span>
+                </button>
+
+                {authError && !showLocalFallback && (
+                  <div className="rounded-xl bg-red-500/15 border border-red-400/40 px-3.5 py-2.5 text-xs font-semibold text-red-200">
+                    {authError}
                   </div>
                 )}
 
-                <div>
-                  <label
-                    htmlFor="admin-email"
-                    className="block text-xs font-semibold text-slate-300 mb-1.5"
+                <div className="pt-2 border-t border-white/10 text-center">
+                  <button
+                    type="button"
+                    onClick={() => setShowLocalFallback((v) => !v)}
+                    className="text-xs font-semibold text-[#B794F4] hover:text-white cursor-pointer"
                   >
-                    Admin Email
-                  </label>
-                  <input
-                    id="admin-email"
-                    type="email"
-                    value={emailInput}
-                    onChange={(e) => setEmailInput(e.target.value)}
-                    placeholder={ADMIN_EMAIL}
-                    required
-                    className="w-full min-h-[44px] rounded-xl bg-[#090611] border border-[#4B3470] px-3.5 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-[#F4C867]"
-                  />
+                    {showLocalFallback
+                      ? 'Hide email & password sign-in'
+                      : 'Or sign in with admin email & password (static mode)'}
+                  </button>
                 </div>
 
-                  <div>
-                    <label
-                      htmlFor="admin-password"
-                      className="block text-xs font-semibold text-slate-300 mb-1.5"
-                    >
-                      Password
-                    </label>
-                    <div className="relative">
-                      <input
-                        id="admin-password"
-                        type={showPassword ? 'text' : 'password'}
-                        value={passwordInput}
-                        onChange={(e) => setPasswordInput(e.target.value)}
-                        placeholder={
-                          needsSetup
-                            ? 'Choose admin password (min 8 chars)'
-                            : 'Enter admin password'
-                        }
-                        required
-                        minLength={needsSetup ? 8 : 1}
-                        className="w-full min-h-[44px] rounded-xl bg-[#090611] border border-[#4B3470] pl-3.5 pr-11 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-[#F4C867]"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => setShowPassword((v) => !v)}
-                        aria-label={showPassword ? 'Hide password' : 'Show password'}
-                        className="absolute right-2 top-1/2 -translate-y-1/2 w-9 h-9 flex items-center justify-center text-slate-400 hover:text-white cursor-pointer"
-                      >
-                        {showPassword ? (
-                          <EyeOff className="w-4 h-4" />
-                        ) : (
-                          <Eye className="w-4 h-4" />
-                        )}
-                      </button>
-                    </div>
-                  </div>
+                {showLocalFallback && (
+                  <form onSubmit={handleAuthSubmit} className="space-y-4 pt-2">
+                    {needsSetup && (
+                      <div className="rounded-xl bg-[#1D1333] border border-[#8B5CF6]/50 p-3 text-xs text-slate-200 leading-relaxed">
+                        Enter your admin password for{' '}
+                        <strong className="text-[#F6C866]">{ADMIN_EMAIL}</strong> to lock and initialize static mode in this browser.
+                      </div>
+                    )}
 
-                  {needsSetup && (
                     <div>
                       <label
-                        htmlFor="admin-confirm-password"
+                        htmlFor="admin-email"
                         className="block text-xs font-semibold text-slate-300 mb-1.5"
                       >
-                        Confirm Password
+                        Admin Email
                       </label>
                       <input
-                        id="admin-confirm-password"
-                        type={showPassword ? 'text' : 'password'}
-                        value={confirmPasswordInput}
-                        onChange={(e) => setConfirmPasswordInput(e.target.value)}
-                        placeholder="Re-enter admin password"
+                        id="admin-email"
+                        type="email"
+                        value={emailInput}
+                        onChange={(e) => setEmailInput(e.target.value)}
+                        placeholder={ADMIN_EMAIL}
                         required
-                        minLength={8}
                         className="w-full min-h-[44px] rounded-xl bg-[#090611] border border-[#4B3470] px-3.5 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-[#F4C867]"
                       />
                     </div>
-                  )}
 
-                  {authError && (
-                    <div className="rounded-xl bg-red-500/15 border border-red-400/40 px-3.5 py-2.5 text-xs font-semibold text-red-200">
-                      {authError}
+                    <div>
+                      <label
+                        htmlFor="admin-password"
+                        className="block text-xs font-semibold text-slate-300 mb-1.5"
+                      >
+                        Password
+                      </label>
+                      <div className="relative">
+                        <input
+                          id="admin-password"
+                          type={showPassword ? 'text' : 'password'}
+                          value={passwordInput}
+                          onChange={(e) => setPasswordInput(e.target.value)}
+                          placeholder={
+                            needsSetup
+                              ? 'Choose admin password (min 8 chars)'
+                              : 'Enter admin password'
+                          }
+                          required
+                          minLength={needsSetup ? 8 : 1}
+                          className="w-full min-h-[44px] rounded-xl bg-[#090611] border border-[#4B3470] pl-3.5 pr-11 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-[#F4C867]"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setShowPassword((v) => !v)}
+                          aria-label={showPassword ? 'Hide password' : 'Show password'}
+                          className="absolute right-2 top-1/2 -translate-y-1/2 w-9 h-9 flex items-center justify-center text-slate-400 hover:text-white cursor-pointer"
+                        >
+                          {showPassword ? (
+                            <EyeOff className="w-4 h-4" />
+                          ) : (
+                            <Eye className="w-4 h-4" />
+                          )}
+                        </button>
+                      </div>
                     </div>
-                  )}
 
-                  <button
-                    type="submit"
-                    disabled={authSubmitting}
-                    className="w-full min-h-[46px] rounded-xl bg-gradient-to-b from-[#FCE18D] to-[#DC9A2E] text-[#171122] font-extrabold text-sm flex items-center justify-center gap-2 hover:brightness-105 disabled:opacity-60 cursor-pointer"
-                  >
-                    <ShieldCheck className="w-4 h-4" />
-                    <span>
-                      {authSubmitting
-                        ? 'Verifying...'
-                        : needsSetup
-                          ? 'Claim & Open Admin Dashboard'
-                          : 'Sign In to Admin Dashboard'}
-                    </span>
-                  </button>
-                </form>
+                    {needsSetup && (
+                      <div>
+                        <label
+                          htmlFor="admin-confirm-password"
+                          className="block text-xs font-semibold text-slate-300 mb-1.5"
+                        >
+                          Confirm Password
+                        </label>
+                        <input
+                          id="admin-confirm-password"
+                          type={showPassword ? 'text' : 'password'}
+                          value={confirmPasswordInput}
+                          onChange={(e) => setConfirmPasswordInput(e.target.value)}
+                          placeholder="Re-enter admin password"
+                          required
+                          minLength={8}
+                          className="w-full min-h-[44px] rounded-xl bg-[#090611] border border-[#4B3470] px-3.5 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-[#F4C867]"
+                        />
+                      </div>
+                    )}
+
+                    {authError && (
+                      <div className="rounded-xl bg-red-500/15 border border-red-400/40 px-3.5 py-2.5 text-xs font-semibold text-red-200">
+                        {authError}
+                      </div>
+                    )}
+
+                    <button
+                      type="submit"
+                      disabled={authSubmitting}
+                      className="w-full min-h-[44px] rounded-xl bg-[#1D1530] border border-[#7C4DFF]/70 text-white font-bold text-sm flex items-center justify-center gap-2 hover:bg-[#271C42] disabled:opacity-60 cursor-pointer"
+                    >
+                      <Lock className="w-4 h-4 text-[#F4C867]" />
+                      <span>
+                        {authSubmitting
+                          ? 'Verifying...'
+                          : needsSetup
+                            ? 'Claim & Open Admin Dashboard'
+                            : 'Sign In with Email'}
+                      </span>
+                    </button>
+                  </form>
+                )}
+              </div>
             </div>
           </div>
         </main>
@@ -631,7 +847,13 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
           <button
             type="button"
-            onClick={() => setIsAuthenticated(false)}
+            onClick={() => {
+              if (authMode === 'firebase') {
+                signOut(auth).catch(() => {});
+              }
+              setFirebaseIdToken(null);
+              setIsAuthenticated(false);
+            }}
             title="Sign Out"
             aria-label="Sign out of Admin Dashboard"
             className="min-h-[38px] px-3 rounded-xl border border-white/15 bg-[#161A2E] text-xs font-semibold text-slate-300 hover:text-white hover:bg-[#1E233D] flex items-center gap-1.5 cursor-pointer"
@@ -790,6 +1012,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                           title={card.title}
                           mediaUrl={card.mediaUrl}
                           mediaType={card.mediaType}
+                          compact
                         />
                       </div>
 

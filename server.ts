@@ -2,29 +2,30 @@ import 'dotenv/config';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import express, { type NextFunction, type Request, type Response } from 'express';
+import express, { type Request, type Response } from 'express';
 import {
   DEFAULT_SITE_CONFIG,
   sanitizeExternalUrl,
   sanitizeMediaUrl,
   type SiteConfig,
 } from './src/data/gamingData.ts';
+import {
+  getMainSiteConfig,
+  getUploadedMedia,
+  saveMainSiteConfig,
+  saveUploadedMedia,
+} from './src/db/siteContent.ts';
+import {
+  requireAdminRole,
+  requireAuth,
+  type AuthRequest,
+} from './src/middleware/auth.ts';
 
 const PORT = Number(process.env.PORT) || 3000;
 const IS_PROD = process.env.NODE_ENV === 'production';
 const ROOT_DIR = process.cwd();
 const DATA_DIR = path.resolve(ROOT_DIR, 'data');
 const UPLOADS_DIR = path.resolve(DATA_DIR, 'uploads');
-const CONFIG_FILE = path.resolve(DATA_DIR, 'site-config.json');
-const ADMIN_AUTH_FILE = path.resolve(DATA_DIR, 'admin-auth.json');
-
-fs.mkdirSync(UPLOADS_DIR, { recursive: true });
-
-// Keep session signing secret strictly in server process memory / env
-const SESSION_SECRET =
-  process.env.ADMIN_SESSION_SECRET?.trim() || crypto.randomBytes(32).toString('hex');
-
-const DEFAULT_ADMIN_EMAIL = (process.env.ADMIN_EMAIL || 'monarchgaming5612@gmail.com').trim().toLowerCase();
 
 const ALLOWED_MIME_TO_EXT: Record<string, string> = {
   'image/jpeg': '.jpg',
@@ -38,125 +39,6 @@ const ALLOWED_MIME_TO_EXT: Record<string, string> = {
 };
 
 const MAX_UPLOAD_BYTES = 30 * 1024 * 1024; // 30MB
-
-interface StoredAdminAuth {
-  email: string;
-  salt: string;
-  passwordHash: string;
-  claimedAt: string;
-}
-
-function safeEqualText(a: string, b: string): boolean {
-  const hashA = crypto.createHash('sha256').update(a).digest();
-  const hashB = crypto.createHash('sha256').update(b).digest();
-  return crypto.timingSafeEqual(hashA, hashB);
-}
-
-function readStoredAdminAuth(): StoredAdminAuth | null {
-  try {
-    if (!fs.existsSync(ADMIN_AUTH_FILE)) return null;
-    const raw = fs.readFileSync(ADMIN_AUTH_FILE, 'utf-8');
-    const parsed = JSON.parse(raw) as StoredAdminAuth;
-    if (parsed && parsed.email && parsed.salt && parsed.passwordHash) {
-      return parsed;
-    }
-    return null;
-  } catch {
-    return null;
-  }
-}
-
-function getEnvAdminCredentials(): { email: string; password: string } | null {
-  const envPassword = process.env.ADMIN_PASSWORD?.trim();
-  if (!envPassword) return null;
-  return {
-    email: DEFAULT_ADMIN_EMAIL,
-    password: envPassword,
-  };
-}
-
-function getAuthState(): { needsSetup: boolean; configuredEmail: string } {
-  const envCreds = getEnvAdminCredentials();
-  if (envCreds) {
-    return { needsSetup: false, configuredEmail: envCreds.email };
-  }
-  const stored = readStoredAdminAuth();
-  if (stored) {
-    return { needsSetup: false, configuredEmail: stored.email };
-  }
-  return { needsSetup: true, configuredEmail: DEFAULT_ADMIN_EMAIL };
-}
-
-function signSessionToken(email: string): string {
-  const payload = {
-    email,
-    exp: Date.now() + 12 * 60 * 60 * 1000, // 12 hours
-  };
-  const payloadB64 = Buffer.from(JSON.stringify(payload)).toString('base64url');
-  const sigB64 = crypto
-    .createHmac('sha256', SESSION_SECRET)
-    .update(payloadB64)
-    .digest('base64url');
-  return `${payloadB64}.${sigB64}`;
-}
-
-function verifySessionToken(token: string): { email: string } | null {
-  const parts = token.split('.');
-  if (parts.length !== 2) return null;
-  const [payloadB64, sigB64] = parts;
-  if (!payloadB64 || !sigB64) return null;
-
-  const expectedSig = crypto
-    .createHmac('sha256', SESSION_SECRET)
-    .update(payloadB64)
-    .digest('base64url');
-
-  if (!safeEqualText(sigB64, expectedSig)) {
-    return null;
-  }
-
-  try {
-    const decoded = JSON.parse(Buffer.from(payloadB64, 'base64url').toString('utf-8')) as {
-      email?: string;
-      exp?: number;
-    };
-    if (!decoded.email || typeof decoded.exp !== 'number' || Date.now() > decoded.exp) {
-      return null;
-    }
-    return { email: decoded.email };
-  } catch {
-    return null;
-  }
-}
-
-function requireAdminAuth(req: Request, res: Response, next: NextFunction): void {
-  const authHeader = req.headers.authorization;
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    res.status(401).json({ error: 'Authentication required' });
-    return;
-  }
-  const token = authHeader.slice('Bearer '.length).trim();
-  const verified = verifySessionToken(token);
-  if (!verified) {
-    res.status(401).json({ error: 'Invalid or expired admin session' });
-    return;
-  }
-  next();
-}
-
-function readSiteConfig(): SiteConfig {
-  try {
-    if (!fs.existsSync(CONFIG_FILE)) {
-      fs.writeFileSync(CONFIG_FILE, JSON.stringify(DEFAULT_SITE_CONFIG, null, 2), 'utf-8');
-      return structuredClone(DEFAULT_SITE_CONFIG);
-    }
-    const raw = fs.readFileSync(CONFIG_FILE, 'utf-8');
-    const parsed = JSON.parse(raw) as Partial<SiteConfig>;
-    return normalizeConfig(parsed);
-  } catch {
-    return structuredClone(DEFAULT_SITE_CONFIG);
-  }
-}
 
 function normalizeConfig(input: Partial<SiteConfig>): SiteConfig {
   const d = DEFAULT_SITE_CONFIG;
@@ -228,7 +110,12 @@ function normalizeConfig(input: Partial<SiteConfig>): SiteConfig {
       matches: Number.isFinite(Number(p.matches)) ? Math.max(0, Math.round(Number(p.matches))) : 0,
       bio: p.bio ? String(p.bio).slice(0, 300) : '',
       mediaUrl: sanitizeMediaUrl(p.mediaUrl),
-      mediaType: p.mediaType === 'video' ? ('video' as const) : p.mediaType === 'image' ? ('image' as const) : undefined,
+      mediaType:
+        p.mediaType === 'video'
+          ? ('video' as const)
+          : p.mediaType === 'image'
+            ? ('image' as const)
+            : undefined,
     };
   });
 
@@ -308,216 +195,199 @@ function normalizeConfig(input: Partial<SiteConfig>): SiteConfig {
   };
 }
 
-function writeSiteConfig(config: SiteConfig): void {
-  fs.writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2), 'utf-8');
-}
-
 async function startServer() {
   const app = express();
   app.disable('x-powered-by');
   app.use(express.json({ limit: '45mb' }));
 
-  // Public site configuration
-  app.get('/api/config', (_req, res) => {
-    res.json(readSiteConfig());
+  // Public site configuration loaded from Cloud SQL
+  app.get('/api/config', async (_req: Request, res: Response) => {
+    try {
+      const stored = await getMainSiteConfig();
+      if (stored) {
+        res.json(normalizeConfig(stored));
+        return;
+      }
+      res.json(structuredClone(DEFAULT_SITE_CONFIG));
+    } catch (error) {
+      console.error('Failed to fetch site config from Cloud SQL:', error);
+      res.status(500).json({ error: 'Failed to load site configuration.' });
+    }
   });
 
-  // Safe uploaded media streaming (supports Range headers for <video>)
-  app.get('/api/media/:filename', (req, res) => {
+  // Uploaded media streaming from Cloud SQL (supports Range requests for <video>)
+  app.get('/api/media/:filename', async (req: Request, res: Response) => {
     const filename = String(req.params.filename || '');
     if (!/^[0-9a-f-]{36}\.(jpg|png|webp|gif|mp4|webm|mov)$/i.test(filename)) {
       res.status(400).json({ error: 'Invalid media identifier' });
       return;
     }
 
-    const resolved = path.resolve(UPLOADS_DIR, filename);
-    if (!resolved.startsWith(UPLOADS_DIR + path.sep) || !fs.existsSync(resolved)) {
-      res.status(404).json({ error: 'Media not found' });
-      return;
-    }
+    try {
+      const media = await getUploadedMedia(filename);
+      if (media) {
+        const buffer = Buffer.from(media.base64Data, 'base64');
+        res.setHeader('X-Content-Type-Options', 'nosniff');
+        res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+        res.setHeader('Content-Type', media.mimeType);
+        res.setHeader('Accept-Ranges', 'bytes');
 
-    res.setHeader('X-Content-Type-Options', 'nosniff');
-    res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
-    res.sendFile(resolved);
-  });
+        const range = req.headers.range;
+        if (range) {
+          const match = /^bytes=(\d*)-(\d*)$/.exec(range);
+          if (match) {
+            const start = match[1] ? Number(match[1]) : 0;
+            const end = match[2] ? Math.min(Number(match[2]), buffer.length - 1) : buffer.length - 1;
+            if (start <= end && end < buffer.length) {
+              res.status(206);
+              res.setHeader('Content-Range', `bytes ${start}-${end}/${buffer.length}`);
+              res.setHeader('Content-Length', String(end - start + 1));
+              res.send(buffer.subarray(start, end + 1));
+              return;
+            }
+          }
+        }
 
-  // Admin Auth Status (checks if initial claim is required)
-  app.get('/api/admin/auth-status', (req, res) => {
-    const state = getAuthState();
-    let authenticated = false;
-    const authHeader = req.headers.authorization;
-    if (authHeader && authHeader.startsWith('Bearer ')) {
-      authenticated = Boolean(verifySessionToken(authHeader.slice('Bearer '.length).trim()));
-    }
-    res.json({
-      needsSetup: state.needsSetup,
-      configuredEmail: state.configuredEmail,
-      authenticated,
-    });
-  });
-
-  // One-time Admin Setup / Claim when env password is not configured yet
-  app.post('/api/admin/claim', (req, res) => {
-    const state = getAuthState();
-    if (!state.needsSetup) {
-      res.status(403).json({ error: 'Admin access has already been configured.' });
-      return;
-    }
-
-    const email = String(req.body?.email || '').trim().toLowerCase();
-    const password = String(req.body?.password || '');
-
-    if (!email || !email.includes('@')) {
-      res.status(400).json({ error: 'Please enter a valid admin email address.' });
-      return;
-    }
-    if (email !== DEFAULT_ADMIN_EMAIL) {
-      res.status(403).json({ error: `Admin setup is restricted to ${DEFAULT_ADMIN_EMAIL}.` });
-      return;
-    }
-    if (password.length < 8) {
-      res.status(400).json({ error: 'Password must be at least 8 characters.' });
-      return;
-    }
-
-    const salt = crypto.randomBytes(16).toString('hex');
-    const passwordHash = crypto.scryptSync(password, salt, 64).toString('hex');
-    const record: StoredAdminAuth = {
-      email,
-      salt,
-      passwordHash,
-      claimedAt: new Date().toISOString(),
-    };
-    fs.writeFileSync(ADMIN_AUTH_FILE, JSON.stringify(record, null, 2), 'utf-8');
-
-    const token = signSessionToken(email);
-    res.json({ token, email });
-  });
-
-  // Admin Login
-  app.post('/api/admin/login', (req, res) => {
-    const state = getAuthState();
-    if (state.needsSetup) {
-      res.status(409).json({ error: 'Initial admin setup is required first.', needsSetup: true });
-      return;
-    }
-
-    const email = String(req.body?.email || '').trim().toLowerCase();
-    const password = String(req.body?.password || '');
-
-    if (!email || !password) {
-      res.status(400).json({ error: 'Email and password are required.' });
-      return;
-    }
-
-    const envCreds = getEnvAdminCredentials();
-    if (envCreds) {
-      const emailOk = safeEqualText(email, envCreds.email);
-      const passOk = safeEqualText(password, envCreds.password);
-      if (!emailOk || !passOk) {
-        res.status(401).json({ error: 'Invalid admin email or password.' });
+        res.setHeader('Content-Length', String(buffer.length));
+        res.send(buffer);
         return;
       }
-      res.json({ token: signSessionToken(envCreds.email), email: envCreds.email });
+    } catch (error) {
+      console.error('Failed to fetch uploaded media:', error);
+      res.status(500).json({ error: 'Failed to load media.' });
       return;
     }
 
-    const stored = readStoredAdminAuth();
-    if (!stored || !safeEqualText(email, stored.email)) {
-      res.status(401).json({ error: 'Invalid admin email or password.' });
+    // Legacy disk fallback if any files exist locally
+    const resolved = path.resolve(UPLOADS_DIR, filename);
+    if (resolved.startsWith(UPLOADS_DIR + path.sep) && fs.existsSync(resolved)) {
+      res.setHeader('X-Content-Type-Options', 'nosniff');
+      res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+      res.sendFile(resolved);
       return;
     }
 
-    const candidateHash = crypto.scryptSync(password, stored.salt, 64);
-    const storedHashBuf = Buffer.from(stored.passwordHash, 'hex');
-    if (
-      candidateHash.length !== storedHashBuf.length ||
-      !crypto.timingSafeEqual(candidateHash, storedHashBuf)
-    ) {
-      res.status(401).json({ error: 'Invalid admin email or password.' });
-      return;
-    }
-
-    res.json({ token: signSessionToken(stored.email), email: stored.email });
+    res.status(404).json({ error: 'Media not found' });
   });
 
-  // Protected: Update full site config (hero, stats, games, leaderboard, social links)
-  app.put('/api/admin/config', requireAdminAuth, (req, res) => {
-    if (!req.body || typeof req.body !== 'object') {
-      res.status(400).json({ error: 'Invalid configuration payload.' });
-      return;
+  // Protected: Verify current Firebase-authenticated Admin user
+  app.get(
+    '/api/admin/me',
+    requireAuth,
+    requireAdminRole,
+    (req: AuthRequest, res: Response) => {
+      res.json({
+        email: req.dbUser?.email || req.user?.email || '',
+        role: req.dbUser?.role || 'admin',
+      });
     }
+  );
 
-    // Explicitly validate any provided social link URLs before normalizing
-    if (Array.isArray(req.body.socialLinks)) {
-      for (const link of req.body.socialLinks) {
-        const raw = typeof link?.url === 'string' ? link.url.trim() : '';
-        if (raw && !sanitizeExternalUrl(raw)) {
-          res.status(400).json({
-            error: `Social link for "${String(link?.label || link?.id || 'channel')}" must start with http:// or https://`,
-          });
-          return;
+  // Protected: Update full site configuration in Cloud SQL
+  app.put(
+    '/api/admin/config',
+    requireAuth,
+    requireAdminRole,
+    async (req: AuthRequest, res: Response) => {
+      if (!req.body || typeof req.body !== 'object') {
+        res.status(400).json({ error: 'Invalid configuration payload.' });
+        return;
+      }
+
+      if (Array.isArray(req.body.socialLinks)) {
+        for (const link of req.body.socialLinks) {
+          const raw = typeof link?.url === 'string' ? link.url.trim() : '';
+          if (raw && !sanitizeExternalUrl(raw)) {
+            res.status(400).json({
+              error: `Social link for "${String(link?.label || link?.id || 'channel')}" must start with http:// or https://`,
+            });
+            return;
+          }
         }
       }
+
+      try {
+        const normalized = normalizeConfig(req.body as Partial<SiteConfig>);
+        const saved = await saveMainSiteConfig(normalized, req.dbUser?.id);
+        res.json(saved);
+      } catch (error) {
+        console.error('Failed to save site config to Cloud SQL:', error);
+        res.status(500).json({ error: 'Failed to save configuration.' });
+      }
     }
+  );
 
-    const normalized = normalizeConfig(req.body as Partial<SiteConfig>);
-    writeSiteConfig(normalized);
-    res.json(normalized);
-  });
-
-  // Protected: Reset site config to defaults
-  app.post('/api/admin/reset', requireAdminAuth, (_req, res) => {
-    const fresh = structuredClone(DEFAULT_SITE_CONFIG);
-    fresh.updatedAt = new Date().toISOString();
-    writeSiteConfig(fresh);
-    res.json(fresh);
-  });
-
-  // Protected: Upload photo or video for profile cards & game cards
-  app.post('/api/admin/upload', requireAdminAuth, (req, res) => {
-    const mimeType = String(req.body?.mimeType || '').toLowerCase().trim();
-    const dataBase64 = String(req.body?.dataBase64 || '');
-
-    const ext = ALLOWED_MIME_TO_EXT[mimeType];
-    if (!ext) {
-      res.status(400).json({
-        error: 'Unsupported file type. Allowed: JPG, PNG, WEBP, GIF, MP4, WEBM, MOV.',
-      });
-      return;
+  // Protected: Reset site config to defaults in Cloud SQL
+  app.post(
+    '/api/admin/reset',
+    requireAuth,
+    requireAdminRole,
+    async (req: AuthRequest, res: Response) => {
+      try {
+        const fresh = structuredClone(DEFAULT_SITE_CONFIG);
+        fresh.updatedAt = new Date().toISOString();
+        const saved = await saveMainSiteConfig(fresh, req.dbUser?.id);
+        res.json(saved);
+      } catch (error) {
+        console.error('Failed to reset site config in Cloud SQL:', error);
+        res.status(500).json({ error: 'Failed to reset configuration.' });
+      }
     }
+  );
 
-    if (!dataBase64) {
-      res.status(400).json({ error: 'Missing media payload.' });
-      return;
+  // Protected: Upload photo or video for profile cards to Cloud SQL
+  app.post(
+    '/api/admin/upload',
+    requireAuth,
+    requireAdminRole,
+    async (req: AuthRequest, res: Response) => {
+      const mimeType = String(req.body?.mimeType || '').toLowerCase().trim();
+      const dataBase64 = String(req.body?.dataBase64 || '');
+
+      const ext = ALLOWED_MIME_TO_EXT[mimeType];
+      if (!ext) {
+        res.status(400).json({
+          error: 'Unsupported file type. Allowed: JPG, PNG, WEBP, GIF, MP4, WEBM, MOV.',
+        });
+        return;
+      }
+
+      if (!dataBase64) {
+        res.status(400).json({ error: 'Missing media payload.' });
+        return;
+      }
+
+      const commaIdx = dataBase64.indexOf(',');
+      const cleanB64 = commaIdx !== -1 ? dataBase64.slice(commaIdx + 1) : dataBase64;
+      const buffer = Buffer.from(cleanB64, 'base64');
+
+      if (buffer.length === 0 || buffer.length > MAX_UPLOAD_BYTES) {
+        res.status(400).json({ error: 'Media file must be between 1 byte and 30 MB.' });
+        return;
+      }
+
+      const safeFilename = `${crypto.randomUUID()}${ext}`;
+      try {
+        await saveUploadedMedia({
+          mediaKey: safeFilename,
+          mimeType,
+          base64Data: cleanB64,
+          bytes: buffer.length,
+          uploadedByUserId: req.dbUser?.id,
+        });
+
+        const mediaType = mimeType.startsWith('video/') ? 'video' : 'image';
+        res.json({
+          mediaUrl: `/api/media/${safeFilename}`,
+          mediaType,
+          bytes: buffer.length,
+        });
+      } catch (error) {
+        console.error('Failed to store uploaded media in Cloud SQL:', error);
+        res.status(500).json({ error: 'Failed to store uploaded media.' });
+      }
     }
-
-    // Strip optional data URL prefix if sent
-    const commaIdx = dataBase64.indexOf(',');
-    const cleanB64 = commaIdx !== -1 ? dataBase64.slice(commaIdx + 1) : dataBase64;
-    const buffer = Buffer.from(cleanB64, 'base64');
-
-    if (buffer.length === 0 || buffer.length > MAX_UPLOAD_BYTES) {
-      res.status(400).json({ error: 'Media file must be between 1 byte and 30 MB.' });
-      return;
-    }
-
-    const safeFilename = `${crypto.randomUUID()}${ext}`;
-    const resolved = path.resolve(UPLOADS_DIR, safeFilename);
-    if (!resolved.startsWith(UPLOADS_DIR + path.sep)) {
-      res.status(400).json({ error: 'Invalid upload path.' });
-      return;
-    }
-
-    fs.writeFileSync(resolved, buffer);
-    const mediaType = mimeType.startsWith('video/') ? 'video' : 'image';
-
-    res.json({
-      mediaUrl: `/api/media/${safeFilename}`,
-      mediaType,
-      bytes: buffer.length,
-    });
-  });
+  );
 
   if (!IS_PROD) {
     const { createServer: createViteServer } = await import('vite');

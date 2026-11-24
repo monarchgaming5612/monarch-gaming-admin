@@ -254,13 +254,83 @@ export const RankMedalBadge: React.FC<{ rank: number }> = ({ rank }) => {
   );
 };
 
+const ComingSoonOverlay: React.FC<{
+  eyebrow: string;
+  accentHex: string;
+  borderClass: string;
+  glowStyle: string;
+  compact?: boolean;
+}> = ({ eyebrow, accentHex, borderClass, glowStyle, compact = false }) => (
+  <div className="absolute inset-0 flex items-center justify-center p-2 pointer-events-none select-none">
+    <div
+      className="absolute inset-0"
+      style={{
+        background:
+          'linear-gradient(180deg, rgba(8,6,14,0.34) 0%, rgba(8,6,14,0.68) 52%, rgba(8,6,14,0.82) 100%)',
+      }}
+    />
+
+    {!compact && (
+      <>
+        <span
+          aria-hidden="true"
+          className={`absolute top-2 left-2 w-3 h-3 border-t-2 border-l-2 ${borderClass}`}
+        />
+        <span
+          aria-hidden="true"
+          className={`absolute top-2 right-2 w-3 h-3 border-t-2 border-r-2 ${borderClass}`}
+        />
+        <span
+          aria-hidden="true"
+          className={`absolute bottom-2 left-2 w-3 h-3 border-b-2 border-l-2 ${borderClass}`}
+        />
+        <span
+          aria-hidden="true"
+          className={`absolute bottom-2 right-2 w-3 h-3 border-b-2 border-r-2 ${borderClass}`}
+        />
+      </>
+    )}
+
+    <div
+      className={`relative z-10 flex flex-col items-center justify-center text-center rounded-md bg-[#0B0914]/80 backdrop-blur-[2px] border ${borderClass} ${
+        compact ? 'px-1.5 py-0.5' : 'px-3 py-1.5 sm:px-3.5 sm:py-2'
+      }`}
+      style={{ boxShadow: glowStyle }}
+    >
+      {!compact && (
+        <span
+          className="text-[8px] sm:text-[9px] font-extrabold uppercase tracking-[0.22em] leading-none mb-0.5"
+          style={{ color: accentHex }}
+        >
+          {eyebrow}
+        </span>
+      )}
+      <span
+        className={`font-display font-extrabold uppercase tracking-[0.08em] text-white leading-none ${
+          compact ? 'text-[9px]' : 'text-[15px] sm:text-[18px]'
+        }`}
+      >
+        COMING SOON
+      </span>
+    </div>
+  </div>
+);
+
 export const GameThumbnailArt: React.FC<{
   gameId: GameId;
   title?: string;
   mediaUrl?: string;
   mediaType?: MediaType;
   controls?: boolean;
-}> = ({ gameId, title = 'Game artwork', mediaUrl, mediaType, controls = false }) => {
+  compact?: boolean;
+}> = ({
+  gameId,
+  title = 'Game artwork',
+  mediaUrl,
+  mediaType,
+  controls = false,
+  compact = false,
+}) => {
   const resolvedUrl = useResolvedMediaUrl(mediaUrl);
 
   if (resolvedUrl) {
@@ -289,207 +359,198 @@ export const GameThumbnailArt: React.FC<{
 
   if (gameId === 'free-fire') {
     return (
-      <svg viewBox="0 0 320 200" className="w-full h-full object-cover" aria-hidden="true">
-        <defs>
-          <linearGradient id="ffSky" x1="0" y1="0" x2="1" y2="1">
-            <stop offset="0%" stopColor="#1A365D" />
-            <stop offset="48%" stopColor="#2B6CB0" />
-            <stop offset="80%" stopColor="#ED8936" />
-            <stop offset="100%" stopColor="#C53030" />
-          </linearGradient>
-          <radialGradient id="ffFire" cx="0.78" cy="0.72" r="0.45">
-            <stop offset="0%" stopColor="#FEF08A" />
-            <stop offset="35%" stopColor="#F97316" stopOpacity="0.9" />
-            <stop offset="100%" stopColor="#7C2D12" stopOpacity="0" />
-          </radialGradient>
-        </defs>
-        <rect width="320" height="200" fill="url(#ffSky)" />
-        <path d="M0 142 Q90 132 180 144 T320 138 V200 H0 Z" fill="#0F172A" fillOpacity="0.85" />
-        <path d="M0 155 Q70 120 145 152 L210 160 L320 135 V200 H0 Z" fill="#111827" />
-        <circle cx="255" cy="145" r="75" fill="url(#ffFire)" />
-        <path d="M58 46 Q74 28 90 46 Z" fill="#E2E8F0" fillOpacity="0.85" />
-        <path d="M60 46 L73 66 M88 46 L75 66" stroke="#CBD5E1" strokeWidth="1.2" />
-        <circle cx="74" cy="68" r="3" fill="#1E293B" />
-        <path d="M224 38 Q242 20 260 38 Z" fill="#F8FAFC" fillOpacity="0.75" />
-        <path d="M226 38 L241 58 M258 38 L243 58" stroke="#CBD5E1" strokeWidth="1.2" />
-        <path d="M22 168 Q28 118 42 90" stroke="#0B0F19" strokeWidth="5" fill="none" />
-        <path d="M42 90 Q18 84 8 102 M42 90 Q24 68 12 72 M42 90 Q58 72 72 86 M42 90 Q66 96 70 112" stroke="#0B0F19" strokeWidth="4" strokeLinecap="round" fill="none" />
-        <g transform="translate(130, 52)">
-          <circle cx="32" cy="14" r="9" fill="#090D16" />
-          <path d="M22 24 L42 22 L48 48 L36 74 L24 70 L28 50 L14 68 L6 62 Z" fill="#090D16" />
-          <path d="M18 30 L4 22 L8 18 L24 25 Z" fill="#1E293B" />
-          <path d="M38 30 L64 16 L67 21 L42 36 Z" fill="#090D16" />
-          <path d="M42 22 L48 48 L36 74" stroke="#FDBA74" strokeWidth="1.5" strokeOpacity="0.7" fill="none" />
-        </g>
-        <circle cx="215" cy="112" r="2" fill="#FDE047" />
-        <circle cx="235" cy="96" r="1.5" fill="#FB923C" />
-        <circle cx="195" cy="128" r="1.8" fill="#FDE047" />
-        <circle cx="282" cy="110" r="2.2" fill="#FDBA74" />
-        <rect width="320" height="200" fill="url(#ffFire)" fillOpacity="0.18" />
-      </svg>
+      <div className="relative w-full h-full overflow-hidden">
+        <svg viewBox="0 0 320 200" className="w-full h-full object-cover" aria-hidden="true">
+          <defs>
+            <linearGradient id="ffSky" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0%" stopColor="#1A365D" />
+              <stop offset="48%" stopColor="#2B6CB0" />
+              <stop offset="80%" stopColor="#ED8936" />
+              <stop offset="100%" stopColor="#C53030" />
+            </linearGradient>
+            <radialGradient id="ffFire" cx="0.78" cy="0.72" r="0.45">
+              <stop offset="0%" stopColor="#FEF08A" />
+              <stop offset="35%" stopColor="#F97316" stopOpacity="0.9" />
+              <stop offset="100%" stopColor="#7C2D12" stopOpacity="0" />
+            </radialGradient>
+          </defs>
+          <rect width="320" height="200" fill="url(#ffSky)" />
+          <path d="M0 142 Q90 132 180 144 T320 138 V200 H0 Z" fill="#0F172A" fillOpacity="0.85" />
+          <path d="M0 155 Q70 120 145 152 L210 160 L320 135 V200 H0 Z" fill="#111827" />
+          <circle cx="255" cy="145" r="75" fill="url(#ffFire)" />
+          <path d="M58 46 Q74 28 90 46 Z" fill="#E2E8F0" fillOpacity="0.85" />
+          <path d="M60 46 L73 66 M88 46 L75 66" stroke="#CBD5E1" strokeWidth="1.2" />
+          <circle cx="74" cy="68" r="3" fill="#1E293B" />
+          <path d="M224 38 Q242 20 260 38 Z" fill="#F8FAFC" fillOpacity="0.75" />
+          <path d="M226 38 L241 58 M258 38 L243 58" stroke="#CBD5E1" strokeWidth="1.2" />
+          <path d="M22 168 Q28 118 42 90" stroke="#0B0F19" strokeWidth="5" fill="none" />
+          <path d="M42 90 Q18 84 8 102 M42 90 Q24 68 12 72 M42 90 Q58 72 72 86 M42 90 Q66 96 70 112" stroke="#0B0F19" strokeWidth="4" strokeLinecap="round" fill="none" />
+          <g transform="translate(130, 52)">
+            <circle cx="32" cy="14" r="9" fill="#090D16" />
+            <path d="M22 24 L42 22 L48 48 L36 74 L24 70 L28 50 L14 68 L6 62 Z" fill="#090D16" />
+            <path d="M18 30 L4 22 L8 18 L24 25 Z" fill="#1E293B" />
+            <path d="M38 30 L64 16 L67 21 L42 36 Z" fill="#090D16" />
+            <path d="M42 22 L48 48 L36 74" stroke="#FDBA74" strokeWidth="1.5" strokeOpacity="0.7" fill="none" />
+          </g>
+          <circle cx="215" cy="112" r="2" fill="#FDE047" />
+          <circle cx="235" cy="96" r="1.5" fill="#FB923C" />
+          <circle cx="195" cy="128" r="1.8" fill="#FDE047" />
+          <circle cx="282" cy="110" r="2.2" fill="#FDBA74" />
+          <rect width="320" height="200" fill="url(#ffFire)" fillOpacity="0.18" />
+        </svg>
+        <ComingSoonOverlay
+          eyebrow="BERMUDA DROP"
+          accentHex="#FB923C"
+          borderClass="border-orange-400/75"
+          glowStyle="0 0 22px rgba(249,115,22,0.34)"
+          compact={compact}
+        />
+      </div>
     );
   }
 
   if (gameId === 'pubg-mobile') {
     return (
-      <svg viewBox="0 0 320 200" className="w-full h-full object-cover" aria-hidden="true">
-        <defs>
-          <linearGradient id="pubgSky" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor="#3B352D" />
-            <stop offset="55%" stopColor="#7C6D58" />
-            <stop offset="100%" stopColor="#D6B98C" />
-          </linearGradient>
-          <radialGradient id="pubgSun" cx="0.62" cy="0.4" r="0.55">
-            <stop offset="0%" stopColor="#FEF3C7" stopOpacity="0.7" />
-            <stop offset="100%" stopColor="#78716C" stopOpacity="0" />
-          </radialGradient>
-        </defs>
-        <rect width="320" height="200" fill="url(#pubgSky)" />
-        <rect width="320" height="200" fill="url(#pubgSun)" />
-        <path d="M0 70 H45 V160 H0 Z M52 95 H96 V160 H52 Z M215 80 H270 V160 H215 Z M278 58 H320 V160 H278 Z" fill="#292524" fillOpacity="0.72" />
-        <ellipse cx="95" cy="115" rx="68" ry="28" fill="#E7E5E4" fillOpacity="0.22" />
-        <ellipse cx="235" cy="125" rx="85" ry="30" fill="#D6D3D1" fillOpacity="0.24" />
-        <path d="M0 156 L320 148 V200 H0 Z" fill="#1C1917" />
-        <g transform="translate(52, 92)">
-          <circle cx="18" cy="12" r="8" fill="#18181B" />
-          <path d="M8 22 H28 L34 64 H4 Z" fill="#18181B" />
-          <rect x="20" y="28" width="28" height="4" rx="1.5" fill="#09090B" />
-        </g>
-        <g transform="translate(228, 96)">
-          <circle cx="18" cy="12" r="8" fill="#18181B" />
-          <path d="M8 22 H28 L32 62 H4 Z" fill="#18181B" />
-        </g>
-        <g transform="translate(115, 34)">
-          <path d="M26 14 C26 4 48 4 48 14 V28 H26 V14 Z" fill="#1C1917" stroke="#A8A29E" strokeWidth="1.2" />
-          <rect x="30" y="13" width="14" height="7" rx="1.5" fill="#09090B" stroke="#D6D3D1" strokeWidth="1" />
-          <path d="M12 36 L26 28 H48 L64 38 L60 98 H14 Z" fill="#27272A" />
-          <path d="M22 36 H52 V74 H22 Z" fill="#18181B" />
-          <path d="M4 60 L78 46 L80 54 L8 68 Z" fill="#09090B" />
-          <rect x="34" y="42" width="16" height="5" rx="1" transform="rotate(-10 34 42)" fill="#44403C" />
-          <path d="M52 62 L56 78 H48 L45 64 Z" fill="#18181B" />
-          <path d="M26 28 H48 L64 38" stroke="#FDE68A" strokeWidth="1.4" strokeOpacity="0.55" fill="none" />
-        </g>
-      </svg>
+      <div className="relative w-full h-full overflow-hidden">
+        <svg viewBox="0 0 320 200" className="w-full h-full object-cover" aria-hidden="true">
+          <defs>
+            <linearGradient id="pubgSky" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="#3B352D" />
+              <stop offset="55%" stopColor="#7C6D58" />
+              <stop offset="100%" stopColor="#D6B98C" />
+            </linearGradient>
+            <radialGradient id="pubgSun" cx="0.62" cy="0.4" r="0.55">
+              <stop offset="0%" stopColor="#FEF3C7" stopOpacity="0.7" />
+              <stop offset="100%" stopColor="#78716C" stopOpacity="0" />
+            </radialGradient>
+          </defs>
+          <rect width="320" height="200" fill="url(#pubgSky)" />
+          <rect width="320" height="200" fill="url(#pubgSun)" />
+          <path d="M0 70 H45 V160 H0 Z M52 95 H96 V160 H52 Z M215 80 H270 V160 H215 Z M278 58 H320 V160 H278 Z" fill="#292524" fillOpacity="0.72" />
+          <ellipse cx="95" cy="115" rx="68" ry="28" fill="#E7E5E4" fillOpacity="0.22" />
+          <ellipse cx="235" cy="125" rx="85" ry="30" fill="#D6D3D1" fillOpacity="0.24" />
+          <path d="M0 156 L320 148 V200 H0 Z" fill="#1C1917" />
+          <g transform="translate(52, 92)">
+            <circle cx="18" cy="12" r="8" fill="#18181B" />
+            <path d="M8 22 H28 L34 64 H4 Z" fill="#18181B" />
+            <rect x="20" y="28" width="28" height="4" rx="1.5" fill="#09090B" />
+          </g>
+          <g transform="translate(228, 96)">
+            <circle cx="18" cy="12" r="8" fill="#18181B" />
+            <path d="M8 22 H28 L32 62 H4 Z" fill="#18181B" />
+          </g>
+          <g transform="translate(115, 34)">
+            <path d="M26 14 C26 4 48 4 48 14 V28 H26 V14 Z" fill="#1C1917" stroke="#A8A29E" strokeWidth="1.2" />
+            <rect x="30" y="13" width="14" height="7" rx="1.5" fill="#09090B" stroke="#D6D3D1" strokeWidth="1" />
+            <path d="M12 36 L26 28 H48 L64 38 L60 98 H14 Z" fill="#27272A" />
+            <path d="M22 36 H52 V74 H22 Z" fill="#18181B" />
+            <path d="M4 60 L78 46 L80 54 L8 68 Z" fill="#09090B" />
+            <rect x="34" y="42" width="16" height="5" rx="1" transform="rotate(-10 34 42)" fill="#44403C" />
+            <path d="M52 62 L56 78 H48 L45 64 Z" fill="#18181B" />
+            <path d="M26 28 H48 L64 38" stroke="#FDE68A" strokeWidth="1.4" strokeOpacity="0.55" fill="none" />
+          </g>
+        </svg>
+        <ComingSoonOverlay
+          eyebrow="ERANGEL OPS"
+          accentHex="#FACC15"
+          borderClass="border-amber-400/75"
+          glowStyle="0 0 22px rgba(234,179,8,0.32)"
+          compact={compact}
+        />
+      </div>
     );
   }
 
   if (gameId === 'codm') {
     return (
-      <svg viewBox="0 0 320 200" className="w-full h-full object-cover" aria-hidden="true">
-        <defs>
-          <linearGradient id="codmBg" x1="0" y1="0" x2="1" y2="1">
-            <stop offset="0%" stopColor="#090D1A" />
-            <stop offset="50%" stopColor="#1E1B4B" />
-            <stop offset="100%" stopColor="#3B0764" />
-          </linearGradient>
-          <linearGradient id="neonGun" x1="0" y1="0" x2="1" y2="0">
-            <stop offset="0%" stopColor="#22D3EE" />
-            <stop offset="55%" stopColor="#818CF8" />
-            <stop offset="100%" stopColor="#E879F9" />
-          </linearGradient>
-        </defs>
-        <rect width="320" height="200" fill="url(#codmBg)" />
-        <rect x="18" y="32" width="38" height="90" fill="#0F172A" />
-        <rect x="24" y="45" width="4" height="55" fill="#EC4899" fillOpacity="0.65" />
-        <rect x="260" y="25" width="44" height="120" fill="#0F172A" />
-        <rect x="270" y="42" width="6" height="72" fill="#22D3EE" fillOpacity="0.7" />
-        <rect x="282" y="55" width="4" height="45" fill="#A855F7" fillOpacity="0.75" />
-        <path d="M0 155 H320 V200 H0 Z" fill="#050711" />
-        <rect x="110" y="164" width="90" height="4" rx="2" fill="#22D3EE" fillOpacity="0.35" />
-        <rect x="215" y="172" width="65" height="3" rx="1.5" fill="#E879F9" fillOpacity="0.35" />
-        <text
-          x="16"
-          y="34"
-          fill="#FFFFFF"
-          fontSize="19"
-          fontWeight="800"
-          letterSpacing="1"
-          fontFamily="Barlow Condensed, sans-serif"
-        >
-          CODM
-        </text>
-        <text x="16" y="44" fill="#94A3B8" fontSize="6.5" fontWeight="600" fontFamily="Plus Jakarta Sans, sans-serif">
-          CALL OF DUTY MOBILE
-        </text>
-        <g transform="translate(88, 36)">
-          <circle cx="52" cy="22" r="13" fill="#0F172A" stroke="#38BDF8" strokeWidth="1.2" />
-          <path d="M44 21 H61 L58 26 H46 Z" fill="#22D3EE" />
-          <path d="M24 42 L52 34 L82 44 L76 112 H28 Z" fill="#0B1120" stroke="#4F46E5" strokeWidth="1" />
-          <path d="M28 74 L148 56 L154 68 L34 88 Z" fill="#020617" stroke="url(#neonGun)" strokeWidth="2" />
-          <rect x="78" y="61" width="54" height="5" rx="2" transform="rotate(-8 78 61)" fill="url(#neonGun)" />
-          <circle cx="148" cy="62" r="6" fill="#22D3EE" fillOpacity="0.55" />
-        </g>
-        <path d="M40 15 L30 55 M120 10 L110 48 M210 20 L200 60 M295 18 L285 52" stroke="#38BDF8" strokeOpacity="0.25" strokeWidth="1" />
-      </svg>
+      <img
+        src="/assets/aistudio/store-codm-hero-carousel_b4ddb9ac.webp"
+        alt={title || 'CODM'}
+        referrerPolicy="no-referrer"
+        className="w-full h-full object-cover object-center"
+      />
     );
   }
 
   if (gameId === 'chess') {
     return (
-      <svg viewBox="0 0 320 200" className="w-full h-full object-cover" aria-hidden="true">
-        <defs>
-          <linearGradient id="chessSky" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor="#453726" />
-            <stop offset="48%" stopColor="#9A7E54" />
-            <stop offset="100%" stopColor="#E6C98F" />
-          </linearGradient>
-          <linearGradient id="kingGold" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor="#FFF7D6" />
-            <stop offset="45%" stopColor="#EAB308" />
-            <stop offset="100%" stopColor="#854D0E" />
-          </linearGradient>
-        </defs>
-        <rect width="320" height="200" fill="url(#chessSky)" />
-        <path
-          d="M0 112 H30 V88 H42 V102 H54 V80 H68 V112 H225 V76 H240 V92 H256 V68 H274 V95 H290 V84 H320 V120 H0 Z"
-          fill="#292016"
-          fillOpacity="0.45"
+      <div className="relative w-full h-full overflow-hidden">
+        <svg viewBox="0 0 320 200" className="w-full h-full object-cover" aria-hidden="true">
+          <defs>
+            <linearGradient id="chessSky" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="#453726" />
+              <stop offset="48%" stopColor="#9A7E54" />
+              <stop offset="100%" stopColor="#E6C98F" />
+            </linearGradient>
+            <linearGradient id="kingGold" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="#FFF7D6" />
+              <stop offset="45%" stopColor="#EAB308" />
+              <stop offset="100%" stopColor="#854D0E" />
+            </linearGradient>
+          </defs>
+          <rect width="320" height="200" fill="url(#chessSky)" />
+          <path
+            d="M0 112 H30 V88 H42 V102 H54 V80 H68 V112 H225 V76 H240 V92 H256 V68 H274 V95 H290 V84 H320 V120 H0 Z"
+            fill="#292016"
+            fillOpacity="0.45"
+          />
+          <path d="M0 124 L320 124 L320 200 L0 200 Z" fill="#1C1510" />
+          <g fill="#E7D8B9" fillOpacity="0.85">
+            <polygon points="40,124 90,124 80,142 20,142" />
+            <polygon points="140,124 185,124 190,142 135,142" />
+            <polygon points="235,124 285,124 300,142 245,142" />
+            <polygon points="75,142 135,142 128,166 55,166" />
+            <polygon points="190,142 248,142 262,166 196,166" />
+            <polygon points="0,166 55,166 36,200 0,200" />
+            <polygon points="128,166 196,166 204,200 118,200" />
+            <polygon points="262,166 320,166 320,200 282,200" />
+          </g>
+          <g fill="#E5DEC9" stroke="#786B53" strokeWidth="1">
+            <path d="M26 142 L38 142 L35 110 H29 Z" />
+            <circle cx="32" cy="106" r="5" />
+            <path d="M64 150 L82 150 L78 100 H68 Z" />
+            <circle cx="73" cy="95" r="7" />
+          </g>
+          <g fill="#171412" stroke="#574C41" strokeWidth="1">
+            <path d="M214 148 L232 148 L227 104 H219 Z" />
+            <circle cx="223" cy="98" r="6" />
+            <path d="M254 156 L276 156 L270 98 H260 Z" />
+            <circle cx="265" cy="92" r="7" />
+            <path d="M288 144 L304 144 L300 108 H292 Z" />
+            <circle cx="296" cy="102" r="5.5" />
+          </g>
+          <g transform="translate(132, 34)">
+            <rect x="25" y="2" width="6" height="16" rx="1" fill="url(#kingGold)" />
+            <rect x="20" y="6" width="16" height="5" rx="1" fill="url(#kingGold)" />
+            <path d="M16 20 H40 L37 32 H19 Z" fill="url(#kingGold)" />
+            <ellipse cx="28" cy="34" rx="13" ry="3.5" fill="#FDE047" />
+            <path d="M19 36 C18 68 14 92 10 112 H46 C42 92 38 68 37 36 Z" fill="url(#kingGold)" />
+            <ellipse cx="28" cy="113" rx="22" ry="6" fill="#CA8A04" stroke="#FEF08A" strokeWidth="1.2" />
+            <rect x="6" y="113" width="44" height="9" rx="3" fill="url(#kingGold)" />
+          </g>
+        </svg>
+        <ComingSoonOverlay
+          eyebrow="ROYAL ARENA"
+          accentHex="#F4C867"
+          borderClass="border-[#F4C867]/80"
+          glowStyle="0 0 22px rgba(244,200,103,0.34)"
+          compact={compact}
         />
-        <path d="M0 124 L320 124 L320 200 L0 200 Z" fill="#1C1510" />
-        <g fill="#E7D8B9" fillOpacity="0.85">
-          <polygon points="40,124 90,124 80,142 20,142" />
-          <polygon points="140,124 185,124 190,142 135,142" />
-          <polygon points="235,124 285,124 300,142 245,142" />
-          <polygon points="75,142 135,142 128,166 55,166" />
-          <polygon points="190,142 248,142 262,166 196,166" />
-          <polygon points="0,166 55,166 36,200 0,200" />
-          <polygon points="128,166 196,166 204,200 118,200" />
-          <polygon points="262,166 320,166 320,200 282,200" />
-        </g>
-        <g fill="#E5DEC9" stroke="#786B53" strokeWidth="1">
-          <path d="M26 142 L38 142 L35 110 H29 Z" />
-          <circle cx="32" cy="106" r="5" />
-          <path d="M64 150 L82 150 L78 100 H68 Z" />
-          <circle cx="73" cy="95" r="7" />
-        </g>
-        <g fill="#171412" stroke="#574C41" strokeWidth="1">
-          <path d="M214 148 L232 148 L227 104 H219 Z" />
-          <circle cx="223" cy="98" r="6" />
-          <path d="M254 156 L276 156 L270 98 H260 Z" />
-          <circle cx="265" cy="92" r="7" />
-          <path d="M288 144 L304 144 L300 108 H292 Z" />
-          <circle cx="296" cy="102" r="5.5" />
-        </g>
-        <g transform="translate(132, 34)">
-          <rect x="25" y="2" width="6" height="16" rx="1" fill="url(#kingGold)" />
-          <rect x="20" y="6" width="16" height="5" rx="1" fill="url(#kingGold)" />
-          <path d="M16 20 H40 L37 32 H19 Z" fill="url(#kingGold)" />
-          <ellipse cx="28" cy="34" rx="13" ry="3.5" fill="#FDE047" />
-          <path d="M19 36 C18 68 14 92 10 112 H46 C42 92 38 68 37 36 Z" fill="url(#kingGold)" />
-          <ellipse cx="28" cy="113" rx="22" ry="6" fill="#CA8A04" stroke="#FEF08A" strokeWidth="1.2" />
-          <rect x="6" y="113" width="44" height="9" rx="3" fill="url(#kingGold)" />
-        </g>
-      </svg>
+      </div>
     );
   }
 
   // Fallback artwork for newly created custom games without uploaded media yet
   return (
-    <div className="w-full h-full bg-gradient-to-br from-[#231442] via-[#130D22] to-[#3B2611] flex flex-col items-center justify-center p-3 text-center">
-      <MonarchCrownLogo className="w-10 h-8 opacity-80 mb-1" />
-      <span className="font-display font-extrabold text-sm tracking-wider uppercase text-[#F6C866]/90">
-        {title}
-      </span>
+    <div className="relative w-full h-full bg-gradient-to-br from-[#231442] via-[#130D22] to-[#3B2611] flex flex-col items-center justify-center p-3 text-center overflow-hidden">
+      <MonarchCrownLogo className="w-10 h-10 opacity-45" />
+      <ComingSoonOverlay
+        eyebrow={title || 'NEW ARENA'}
+        accentHex="#C4B5FD"
+        borderClass="border-[#8B5CF6]/75"
+        glowStyle="0 0 22px rgba(139,92,246,0.34)"
+        compact={compact}
+      />
     </div>
   );
 };

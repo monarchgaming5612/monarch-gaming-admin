@@ -8,6 +8,8 @@ import {
   CONFIG_UPDATED_EVENT,
   SITE_CONFIG_STORAGE_KEY,
   loadSiteConfig,
+  normalizeSiteConfig,
+  saveSiteConfig,
 } from './data/localStore';
 import { fetchSiteConfigFromSupabase } from './data/supabaseClient';
 import {
@@ -39,11 +41,32 @@ export default function App() {
   useEffect(() => {
     let active = true;
 
-    fetchSiteConfigFromSupabase().then((remoteConfig) => {
+    const loadRemoteConfig = async () => {
+      try {
+        const res = await fetch('/api/config');
+        if (res.ok) {
+          const contentType = res.headers.get('content-type') || '';
+          if (contentType.includes('application/json')) {
+            const data = (await res.json()) as Partial<SiteConfig>;
+            if (active && data && data.hero) {
+              const normalized = normalizeSiteConfig(data);
+              setConfig(normalized);
+              saveSiteConfig(normalized);
+              return;
+            }
+          }
+        }
+      } catch {
+        // Fallback to Supabase / localStorage when static or offline
+      }
+
+      const remoteConfig = await fetchSiteConfigFromSupabase();
       if (active && remoteConfig) {
         setConfig(remoteConfig);
       }
-    });
+    };
+
+    loadRemoteConfig();
 
     const handlePopState = () => {
       setAdminView(isAdminPath());

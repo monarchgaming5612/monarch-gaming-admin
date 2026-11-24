@@ -138,6 +138,7 @@ export const FEATURED_GAMES: FeaturedGame[] = [
     prizePool: '$15,000',
     nextMatchIn: '04m 18s',
     activeRooms: 42,
+    status: 'pending',
     description:
       'Drop into fast-paced 50-player survival brackets, Clash Squad 4v4 gauntlets, and daily ranked scrims.',
     tournaments: [
@@ -166,6 +167,7 @@ export const FEATURED_GAMES: FeaturedGame[] = [
     prizePool: '$22,500',
     nextMatchIn: '07m 45s',
     activeRooms: 36,
+    status: 'pending',
     description:
       'Compete across Erangel and Miramar pro-rules lobbies with verified anti-cheat and instant payout brackets.',
     tournaments: [
@@ -194,6 +196,11 @@ export const FEATURED_GAMES: FeaturedGame[] = [
     prizePool: '$12,000',
     nextMatchIn: '02m 50s',
     activeRooms: 29,
+    status: 'active',
+    photos: ['/assets/aistudio/store-codm-hero-carousel_b4ddb9ac.webp'],
+    videos: [],
+    mediaUrl: '/assets/aistudio/store-codm-hero-carousel_b4ddb9ac.webp',
+    mediaType: 'image',
     description:
       'High-intensity Search & Destroy, Hardpoint, and Battle Royale Isolated lobbies tuned for competitive mobile squads.',
     tournaments: [
@@ -222,6 +229,7 @@ export const FEATURED_GAMES: FeaturedGame[] = [
     prizePool: '$18,000',
     nextMatchIn: '01m 10s',
     activeRooms: 64,
+    status: 'pending',
     description:
       'Rapid, Blitz, and Bullet Swiss arenas with fair-play rating verification and Grandmaster seasonal crowns.',
     tournaments: [
@@ -426,6 +434,19 @@ export function sanitizeMediaUrl(rawUrl: string | undefined | null): string | un
   if (!rawUrl || typeof rawUrl !== 'string') return undefined;
   const trimmed = rawUrl.trim();
   if (!trimmed) return undefined;
+  if (
+    trimmed.startsWith('/assets/') &&
+    !trimmed.includes('..') &&
+    /^\/assets\/[a-zA-Z0-9_./-]+\.(jpg|jpeg|png|webp|gif|mp4|webm|mov)$/i.test(trimmed)
+  ) {
+    return trimmed;
+  }
+  if (
+    trimmed.startsWith('/api/media/') &&
+    /^\/api\/media\/[0-9a-f-]{36}\.(jpg|png|webp|gif|mp4|webm|mov)$/i.test(trimmed)
+  ) {
+    return trimmed;
+  }
   if (/^idb-media:[0-9a-f-]{36}$/i.test(trimmed)) {
     return trimmed;
   }

@@ -46,26 +46,46 @@ function constantTimeEqual(a: string, b: string): boolean {
   return diff === 0;
 }
 
+function fallbackSaltedHash(password: string, saltHex: string): string {
+  // Portable iterated FNV-1a + mixing fallback when crypto.subtle is unavailable (non-HTTPS)
+  let h1 = 0x811c9dc5;
+  let h2 = 0x9e3779b9;
+  const input = `${saltHex}:${password}:${saltHex}`;
+  for (let round = 0; round < 2048; round += 1) {
+    for (let i = 0; i < input.length; i += 1) {
+      const ch = input.charCodeAt(i);
+      h1 ^= ch ^ (round & 0xff);
+      h1 = Math.imul(h1, 0x01000193) >>> 0;
+      h2 ^= ch + ((h1 >>> 5) | (h1 << 27));
+      h2 = Math.imul(h2, 0x85ebca6b) >>> 0;
+    }
+  }
+  return `${h1.toString(16).padStart(8, '0')}${h2.toString(16).padStart(8, '0')}`;
+}
+
 async function derivePasswordHash(password: string, saltHex: string): Promise<string> {
-  const encoder = new TextEncoder();
-  const keyMaterial = await crypto.subtle.importKey(
-    'raw',
-    encoder.encode(password),
-    'PBKDF2',
-    false,
-    ['deriveBits']
-  );
-  const derivedBits = await crypto.subtle.deriveBits(
-    {
-      name: 'PBKDF2',
-      salt: encoder.encode(saltHex),
-      iterations: 100_000,
-      hash: 'SHA-256',
-    },
-    keyMaterial,
-    256
-  );
-  return bytesToHex(new Uint8Array(derivedBits));
+  if (typeof window !== 'undefined' && window.crypto?.subtle) {
+    const encoder = new TextEncoder();
+    const keyMaterial = await window.crypto.subtle.importKey(
+      'raw',
+      encoder.encode(password),
+      'PBKDF2',
+      false,
+      ['deriveBits']
+    );
+    const derivedBits = await window.crypto.subtle.deriveBits(
+      {
+        name: 'PBKDF2',
+        salt: encoder.encode(saltHex),
+        iterations: 100_000,
+        hash: 'SHA-256',
+      },
+      keyMaterial,
+      256
+    );
+    return bytesToHex(new Uint8Array(derivedBits));
+  }
+  return fallbackSaltedHash(password, saltHex);
 }
 
 function readStoredAdminAuth(): StoredAdminAuth | null {
