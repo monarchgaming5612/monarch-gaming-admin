@@ -426,7 +426,13 @@ export function sanitizeMediaUrl(rawUrl: string | undefined | null): string | un
   if (!rawUrl || typeof rawUrl !== 'string') return undefined;
   const trimmed = rawUrl.trim();
   if (!trimmed) return undefined;
-  if (trimmed.startsWith('/api/media/') && /^\/api\/media\/[0-9a-f-]{36}\.(jpg|png|webp|gif|mp4|webm|mov)$/i.test(trimmed)) {
+  if (/^idb-media:[0-9a-f-]{36}$/i.test(trimmed)) {
+    return trimmed;
+  }
+  if (
+    /^data:image\/(jpeg|jpg|png|webp|gif);base64,[A-Za-z0-9+/=]+$/i.test(trimmed) ||
+    /^data:video\/(mp4|webm|quicktime);base64,[A-Za-z0-9+/=]+$/i.test(trimmed)
+  ) {
     return trimmed;
   }
   const external = sanitizeExternalUrl(trimmed);

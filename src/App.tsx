@@ -1,10 +1,15 @@
 import React, { useEffect, useState } from 'react';
 import { Download, Users, Trophy, Headset, User } from 'lucide-react';
 import {
-  DEFAULT_SITE_CONFIG,
   sanitizeExternalUrl,
   type SiteConfig,
 } from './data/gamingData';
+import {
+  CONFIG_UPDATED_EVENT,
+  SITE_CONFIG_STORAGE_KEY,
+  loadSiteConfig,
+} from './data/localStore';
+import { fetchSiteConfigFromSupabase } from './data/supabaseClient';
 import {
   MonarchCrownLogo,
   GameThumbnailArt,
@@ -25,7 +30,7 @@ function isAdminPath(): boolean {
 }
 
 export default function App() {
-  const [config, setConfig] = useState<SiteConfig>(DEFAULT_SITE_CONFIG);
+  const [config, setConfig] = useState<SiteConfig>(() => loadSiteConfig());
   const [adminView, setAdminView] = useState<boolean>(() => isAdminPath());
   const [navOpen, setNavOpen] = useState(false);
   const [downloadOpen, setDownloadOpen] = useState(false);
@@ -33,26 +38,43 @@ export default function App() {
 
   useEffect(() => {
     let active = true;
-    fetch('/api/config')
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data: SiteConfig | null) => {
-        if (active && data && data.hero) {
-          setConfig(data);
-        }
-      })
-      .catch(() => {
-        // Fallback smoothly to DEFAULT_SITE_CONFIG
-      });
+
+    fetchSiteConfigFromSupabase().then((remoteConfig) => {
+      if (active && remoteConfig) {
+        setConfig(remoteConfig);
+      }
+    });
 
     const handlePopState = () => {
       setAdminView(isAdminPath());
     };
+
+    const handleStorage = (event: StorageEvent) => {
+      if (event.key === SITE_CONFIG_STORAGE_KEY) {
+        setConfig(loadSiteConfig());
+      }
+    };
+
+    const handleConfigUpdated = (event: Event) => {
+      const customEvent = event as CustomEvent<SiteConfig>;
+      if (customEvent.detail) {
+        setConfig(customEvent.detail);
+      } else {
+        setConfig(loadSiteConfig());
+      }
+    };
+
     window.addEventListener('popstate', handlePopState);
     window.addEventListener('hashchange', handlePopState);
+    window.addEventListener('storage', handleStorage);
+    window.addEventListener(CONFIG_UPDATED_EVENT, handleConfigUpdated);
+
     return () => {
       active = false;
       window.removeEventListener('popstate', handlePopState);
       window.removeEventListener('hashchange', handlePopState);
+      window.removeEventListener('storage', handleStorage);
+      window.removeEventListener(CONFIG_UPDATED_EVENT, handleConfigUpdated);
     };
   }, []);
 

@@ -1,5 +1,42 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import type { GameId, MediaType, SocialChannelId } from '../data/gamingData';
+import { loadBlobFromIndexedDb } from '../data/localStore';
+
+export function useResolvedMediaUrl(mediaUrl?: string): string | undefined {
+  const isIdb = Boolean(mediaUrl && mediaUrl.startsWith('idb-media:'));
+  const [resolved, setResolved] = useState<string | undefined>(
+    isIdb ? undefined : mediaUrl
+  );
+
+  useEffect(() => {
+    if (!mediaUrl) {
+      setResolved(undefined);
+      return;
+    }
+    if (!mediaUrl.startsWith('idb-media:')) {
+      setResolved(mediaUrl);
+      return;
+    }
+
+    let cancelled = false;
+    let objectUrl: string | null = null;
+
+    loadBlobFromIndexedDb(mediaUrl).then((blob) => {
+      if (cancelled || !blob) return;
+      objectUrl = URL.createObjectURL(blob);
+      setResolved(objectUrl);
+    });
+
+    return () => {
+      cancelled = true;
+      if (objectUrl) {
+        URL.revokeObjectURL(objectUrl);
+      }
+    };
+  }, [mediaUrl]);
+
+  return resolved;
+}
 
 export const MonarchCrownLogo: React.FC<{ className?: string }> = ({ className = 'w-10 h-10' }) => (
   <span
@@ -70,7 +107,9 @@ export const PlayerProfileAvatar: React.FC<{
   mediaUrl?: string;
   mediaType?: MediaType;
 }> = ({ rank, name, mediaUrl, mediaType }) => {
-  if (mediaUrl) {
+  const resolvedUrl = useResolvedMediaUrl(mediaUrl);
+
+  if (resolvedUrl) {
     const ringClass =
       rank === 1
         ? 'border-[#F5C358]'
@@ -84,7 +123,7 @@ export const PlayerProfileAvatar: React.FC<{
       <div className={`relative w-11 h-11 rounded-full overflow-hidden shrink-0 border-2 ${ringClass} bg-[#181128]`}>
         {mediaType === 'video' ? (
           <video
-            src={mediaUrl}
+            src={resolvedUrl}
             autoPlay
             muted
             loop
@@ -93,7 +132,7 @@ export const PlayerProfileAvatar: React.FC<{
           />
         ) : (
           <img
-            src={mediaUrl}
+            src={resolvedUrl}
             alt={`${name} profile`}
             referrerPolicy="no-referrer"
             className="w-full h-full object-cover"
@@ -222,11 +261,13 @@ export const GameThumbnailArt: React.FC<{
   mediaType?: MediaType;
   controls?: boolean;
 }> = ({ gameId, title = 'Game artwork', mediaUrl, mediaType, controls = false }) => {
-  if (mediaUrl) {
+  const resolvedUrl = useResolvedMediaUrl(mediaUrl);
+
+  if (resolvedUrl) {
     if (mediaType === 'video') {
       return (
         <video
-          src={mediaUrl}
+          src={resolvedUrl}
           autoPlay
           muted={!controls}
           loop
@@ -238,7 +279,7 @@ export const GameThumbnailArt: React.FC<{
     }
     return (
       <img
-        src={mediaUrl}
+        src={resolvedUrl}
         alt={title}
         referrerPolicy="no-referrer"
         className="w-full h-full object-cover"

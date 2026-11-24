@@ -24,7 +24,7 @@ fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 const SESSION_SECRET =
   process.env.ADMIN_SESSION_SECRET?.trim() || crypto.randomBytes(32).toString('hex');
 
-const DEFAULT_ADMIN_EMAIL = (process.env.ADMIN_EMAIL || 'monarch@admin.app').trim().toLowerCase();
+const DEFAULT_ADMIN_EMAIL = (process.env.ADMIN_EMAIL || 'monarchgaming5612@gmail.com').trim().toLowerCase();
 
 const ALLOWED_MIME_TO_EXT: Record<string, string> = {
   'image/jpeg': '.jpg',

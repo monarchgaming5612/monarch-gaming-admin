@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import {
   ArrowLeft,
+  BarChart3,
   CheckCircle2,
   Eye,
   EyeOff,
@@ -13,7 +14,9 @@ import {
   Save,
   Share2,
   ShieldCheck,
+  Trophy,
   UserCheck,
+  Users,
   Video,
   X,
 } from 'lucide-react';
@@ -24,12 +27,26 @@ import {
   type SiteConfig,
 } from '../data/gamingData';
 import {
+  ADMIN_EMAIL,
+  claimLocalAdminAccess,
+  deleteBlobFromIndexedDb,
+  getLocalAdminAuthStatus,
+  loginLocalAdmin,
+  saveSiteConfig,
+  storeBrowserMedia,
+} from '../data/localStore';
+import {
+  saveSiteConfigToSupabase,
+  uploadMediaToSupabaseStorage,
+} from '../data/supabaseClient';
+import {
   GameThumbnailArt,
   MonarchCrownLogo,
   SocialGlyph,
+  useResolvedMediaUrl,
 } from './GameArtwork';
 
-type BottomTab = 'about' | 'social';
+type BottomTab = 'about' | 'social' | 'stats';
 
 interface AdminDashboardProps {
   config: SiteConfig;
@@ -51,14 +68,68 @@ const ALLOWED_VIDEO_TYPES = [
   'video/quicktime',
 ];
 
-async function readFileAsBase64(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result || ''));
-    reader.onerror = () => reject(new Error('Failed to read selected file.'));
-    reader.readAsDataURL(file);
-  });
-}
+const MediaStripThumb: React.FC<{
+  mediaUrl: string;
+  mediaType: MediaType;
+  title: string;
+  isPrimary: boolean;
+  onSelect: () => void;
+  onRemove: () => void;
+}> = ({ mediaUrl, mediaType, title, isPrimary, onSelect, onRemove }) => {
+  const resolvedUrl = useResolvedMediaUrl(mediaUrl);
+
+  return (
+    <div
+      className={`relative group w-16 h-10 rounded-lg overflow-hidden shrink-0 border bg-black/60 transition-all ${
+        isPrimary
+          ? 'border-[#F4C867] ring-1 ring-[#F4C867]/60'
+          : 'border-white/15 hover:border-white/40'
+      }`}
+    >
+      <button
+        type="button"
+        onClick={onSelect}
+        title={`Set as main card ${mediaType === 'video' ? 'video' : 'photo'}`}
+        className="w-full h-full block relative cursor-pointer"
+      >
+        {resolvedUrl ? (
+          mediaType === 'video' ? (
+            <>
+              <video
+                src={resolvedUrl}
+                muted
+                playsInline
+                className="w-full h-full object-cover opacity-85"
+              />
+              <span className="absolute bottom-0.5 left-0.5 px-1 rounded bg-black/75 text-[9px] font-bold text-[#F4C867]">
+                VID
+              </span>
+            </>
+          ) : (
+            <img
+              src={resolvedUrl}
+              alt={`${title} upload`}
+              referrerPolicy="no-referrer"
+              className="w-full h-full object-cover"
+            />
+          )
+        ) : (
+          <span className="w-full h-full flex items-center justify-center text-[9px] text-slate-400">
+            ...
+          </span>
+        )}
+      </button>
+      <button
+        type="button"
+        onClick={onRemove}
+        aria-label={`Remove ${mediaType === 'video' ? 'video' : 'photo'} from ${title}`}
+        className="absolute top-0.5 right-0.5 w-4 h-4 rounded-full bg-black/75 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity cursor-pointer"
+      >
+        <X className="w-2.5 h-2.5" />
+      </button>
+    </div>
+  );
+};
 
 function getGamePhotos(game: FeaturedGame): string[] {
   if (Array.isArray(game.photos) && game.photos.length > 0) {
@@ -85,12 +156,12 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   onConfigUpdated,
   onExit,
 }) => {
-  const [authToken, setAuthToken] = useState<string | null>(null);
-  const [adminEmail, setAdminEmail] = useState<string>('monarch@admin.app');
-  const [needsSetup, setNeedsSetup] = useState<boolean>(false);
-  const [checkingAuth, setCheckingAuth] = useState<boolean>(true);
+  const initialAuth = getLocalAdminAuthStatus();
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
+  const [adminEmail, setAdminEmail] = useState<string>(initialAuth.configuredEmail);
+  const [needsSetup, setNeedsSetup] = useState<boolean>(initialAuth.needsSetup);
 
-  const [emailInput, setEmailInput] = useState('monarch@admin.app');
+  const [emailInput, setEmailInput] = useState<string>(initialAuth.configuredEmail);
   const [passwordInput, setPasswordInput] = useState('');
   const [confirmPasswordInput, setConfirmPasswordInput] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -102,6 +173,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const [cardsDirty, setCardsDirty] = useState(false);
   const [aboutDirty, setAboutDirty] = useState(false);
   const [socialDirty, setSocialDirty] = useState(false);
+  const [statsDirty, setStatsDirty] = useState(false);
   const [savingSection, setSavingSection] = useState<string | null>(null);
   const [uploadingKey, setUploadingKey] = useState<string | null>(null);
   const [statusBanner, setStatusBanner] = useState<{
@@ -110,32 +182,16 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   } | null>(null);
 
   useEffect(() => {
-    let active = true;
-    fetch('/api/admin/auth-status')
-      .then((res) => res.json())
-      .then((data: { needsSetup?: boolean; configuredEmail?: string }) => {
-        if (!active) return;
-        setNeedsSetup(Boolean(data.needsSetup));
-        if (data.configuredEmail) {
-          setEmailInput(data.configuredEmail);
-        }
-      })
-      .catch(() => {
-        if (active) setAuthError('Unable to reach server authentication status.');
-      })
-      .finally(() => {
-        if (active) setCheckingAuth(false);
-      });
-    return () => {
-      active = false;
-    };
+    const status = getLocalAdminAuthStatus();
+    setNeedsSetup(status.needsSetup);
+    setEmailInput(status.configuredEmail);
   }, []);
 
   useEffect(() => {
-    if (!cardsDirty && !aboutDirty && !socialDirty) {
+    if (!cardsDirty && !aboutDirty && !socialDirty && !statsDirty) {
       setDraft(structuredClone(config));
     }
-  }, [config, cardsDirty, aboutDirty, socialDirty]);
+  }, [config, cardsDirty, aboutDirty, socialDirty, statsDirty]);
 
   const showStatus = (type: 'success' | 'error', text: string) => {
     setStatusBanner({ type, text });
@@ -155,28 +211,22 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
     setAuthSubmitting(true);
     try {
-      const endpoint = needsSetup ? '/api/admin/claim' : '/api/admin/login';
-      const res = await fetch(endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          email: emailInput.trim(),
-          password: passwordInput,
-        }),
-      });
-      const data = (await res.json()) as { token?: string; email?: string; error?: string };
-      if (!res.ok || !data.token) {
-        setAuthError(data.error || 'Authentication failed.');
+      const result = needsSetup
+        ? await claimLocalAdminAccess(emailInput, passwordInput)
+        : await loginLocalAdmin(emailInput, passwordInput);
+
+      if (!result.ok) {
+        setAuthError(result.error);
         return;
       }
 
-      setAuthToken(data.token);
-      setAdminEmail(data.email || emailInput.trim());
+      setIsAuthenticated(true);
+      setAdminEmail(result.email);
       setNeedsSetup(false);
       setPasswordInput('');
       setConfirmPasswordInput('');
     } catch {
-      setAuthError('Network error while contacting admin server.');
+      setAuthError('Unable to verify admin credentials in browser storage.');
     } finally {
       setAuthSubmitting(false);
     }
@@ -184,40 +234,35 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
   const persistConfig = async (
     nextConfig: SiteConfig,
-    section: 'cards' | 'about' | 'social' | 'all',
+    section: 'cards' | 'about' | 'social' | 'stats' | 'all',
     successMessage: string
   ): Promise<boolean> => {
-    if (!authToken) return false;
+    if (!isAuthenticated) return false;
     setSavingSection(section);
     try {
-      const res = await fetch('/api/admin/config', {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${authToken}`,
-        },
-        body: JSON.stringify(nextConfig),
-      });
-      const data = (await res.json()) as SiteConfig & { error?: string };
-      if (!res.ok) {
-        if (res.status === 401) {
-          setAuthToken(null);
-          setAuthError('Session expired. Please sign in again.');
-        } else {
-          showStatus('error', data.error || 'Failed to save changes.');
-        }
-        return false;
-      }
-
-      setDraft(structuredClone(data));
-      onConfigUpdated(data);
+      const saved = saveSiteConfig(nextConfig);
+      setDraft(structuredClone(saved));
+      onConfigUpdated(saved);
       if (section === 'cards' || section === 'all') setCardsDirty(false);
       if (section === 'about' || section === 'all') setAboutDirty(false);
       if (section === 'social' || section === 'all') setSocialDirty(false);
-      showStatus('success', successMessage);
+      if (section === 'stats' || section === 'all') setStatsDirty(false);
+
+      const remote = await saveSiteConfigToSupabase(saved);
+      if (remote.synced) {
+        showStatus('success', `${successMessage} Synced live for all visitors.`);
+      } else {
+        showStatus(
+          'success',
+          `${successMessage} Saved locally (${remote.error || 'Supabase sync pending'}).`
+        );
+      }
       return true;
     } catch {
-      showStatus('error', 'Unable to save configuration.');
+      showStatus(
+        'error',
+        'Browser storage quota reached. Try removing unused media or using a smaller file.'
+      );
       return false;
     } finally {
       setSavingSection(null);
@@ -229,7 +274,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     gameIndex: number,
     kind: MediaType
   ) => {
-    if (!files || files.length === 0 || !authToken) return;
+    if (!files || files.length === 0 || !isAuthenticated) return;
 
     const allowedList = kind === 'image' ? ALLOWED_IMAGE_TYPES : ALLOWED_VIDEO_TYPES;
     const validFiles = Array.from(files).filter((file) => {
@@ -258,35 +303,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       const uploadedUrls: string[] = [];
 
       for (const file of validFiles) {
-        const dataBase64 = await readFileAsBase64(file);
-        const res = await fetch('/api/admin/upload', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${authToken}`,
-          },
-          body: JSON.stringify({
-            mimeType: file.type,
-            dataBase64,
-          }),
-        });
-        const data = (await res.json()) as {
-          mediaUrl?: string;
-          mediaType?: MediaType;
-          error?: string;
-        };
-
-        if (!res.ok || !data.mediaUrl) {
-          if (res.status === 401) {
-            setAuthToken(null);
-            setAuthError('Session expired. Please sign in again.');
-            return;
-          }
-          showStatus('error', data.error || `Failed to upload ${file.name}.`);
-          continue;
+        const remoteUrl = await uploadMediaToSupabaseStorage(file);
+        const storedUrl = remoteUrl || (await storeBrowserMedia(file, kind));
+        if (storedUrl) {
+          uploadedUrls.push(storedUrl);
         }
-
-        uploadedUrls.push(data.mediaUrl);
       }
 
       if (uploadedUrls.length === 0) return;
@@ -313,10 +334,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       await persistConfig(
         nextDraft,
         'cards',
-        `${uploadedUrls.length} ${kind === 'image' ? 'photo' : 'video'}${uploadedUrls.length > 1 ? 's' : ''} uploaded & published to ${targetGame.title}.`
+        `${uploadedUrls.length} ${kind === 'image' ? 'photo' : 'video'}${uploadedUrls.length > 1 ? 's' : ''} saved & published to ${targetGame.title}.`
       );
     } catch {
-      showStatus('error', 'Upload failed due to a network error.');
+      showStatus('error', 'Failed to save media to browser storage.');
     } finally {
       setUploadingKey(null);
     }
@@ -371,11 +392,14 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       }
     }
 
-    await persistConfig(
+    const ok = await persistConfig(
       nextDraft,
       'cards',
       `Removed ${mediaType} from ${target.title}.`
     );
+    if (ok) {
+      await deleteBlobFromIndexedDb(mediaUrl);
+    }
   };
 
   const handleToggleCardStatus = async (gameIndex: number) => {
@@ -414,7 +438,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   };
 
   // Auth Gate Screen
-  if (!authToken) {
+  if (!isAuthenticated) {
     return (
       <div className="min-h-screen w-full bg-[#090B15] text-white cosmic-particles flex flex-col">
         <header className="h-16 px-4 sm:px-6 border-b border-white/[0.08] bg-[#0D101D]/90 backdrop-blur-md flex items-center justify-between">
@@ -444,11 +468,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 </div>
                 <div>
                   <h1 className="text-xl font-extrabold text-white">
-                    {checkingAuth
-                      ? 'Checking Admin Access...'
-                      : needsSetup
-                        ? 'Activate Admin Access'
-                        : 'Admin Dashboard Sign In'}
+                    {needsSetup
+                      ? 'Activate Admin Access'
+                      : 'Admin Dashboard Sign In'}
                   </h1>
                   <p className="text-xs text-[#B794F4]">
                     {needsSetup
@@ -458,36 +480,31 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 </div>
               </div>
 
-              {checkingAuth ? (
-                <div className="py-10 text-center text-sm text-slate-400">
-                  Verifying server configuration...
-                </div>
-              ) : (
-                <form onSubmit={handleAuthSubmit} className="space-y-4">
-                  {needsSetup && (
-                    <div className="rounded-xl bg-[#1D1333] border border-[#8B5CF6]/50 p-3 text-xs text-slate-200 leading-relaxed">
-                      Enter your admin password for{' '}
-                      <strong className="text-[#F6C866]">{emailInput}</strong> to lock and initialize the Admin Dashboard.
-                    </div>
-                  )}
-
-                  <div>
-                    <label
-                      htmlFor="admin-email"
-                      className="block text-xs font-semibold text-slate-300 mb-1.5"
-                    >
-                      Admin Email
-                    </label>
-                    <input
-                      id="admin-email"
-                      type="email"
-                      value={emailInput}
-                      onChange={(e) => setEmailInput(e.target.value)}
-                      placeholder="monarch@admin.app"
-                      required
-                      className="w-full min-h-[44px] rounded-xl bg-[#090611] border border-[#4B3470] px-3.5 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-[#F4C867]"
-                    />
+              <form onSubmit={handleAuthSubmit} className="space-y-4">
+                {needsSetup && (
+                  <div className="rounded-xl bg-[#1D1333] border border-[#8B5CF6]/50 p-3 text-xs text-slate-200 leading-relaxed">
+                    Enter your admin password for{' '}
+                    <strong className="text-[#F6C866]">{ADMIN_EMAIL}</strong> to lock and initialize the Admin Dashboard in this browser.
                   </div>
+                )}
+
+                <div>
+                  <label
+                    htmlFor="admin-email"
+                    className="block text-xs font-semibold text-slate-300 mb-1.5"
+                  >
+                    Admin Email
+                  </label>
+                  <input
+                    id="admin-email"
+                    type="email"
+                    value={emailInput}
+                    onChange={(e) => setEmailInput(e.target.value)}
+                    placeholder={ADMIN_EMAIL}
+                    required
+                    className="w-full min-h-[44px] rounded-xl bg-[#090611] border border-[#4B3470] px-3.5 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-[#F4C867]"
+                  />
+                </div>
 
                   <div>
                     <label
@@ -568,7 +585,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                     </span>
                   </button>
                 </form>
-              )}
             </div>
           </div>
         </main>
@@ -615,7 +631,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
           <button
             type="button"
-            onClick={() => setAuthToken(null)}
+            onClick={() => setIsAuthenticated(false)}
             title="Sign Out"
             aria-label="Sign out of Admin Dashboard"
             className="min-h-[38px] px-3 rounded-xl border border-white/15 bg-[#161A2E] text-xs font-semibold text-slate-300 hover:text-white hover:bg-[#1E233D] flex items-center gap-1.5 cursor-pointer"
@@ -687,6 +703,19 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             >
               <Share2 className="w-4 h-4 text-[#A78BFA] shrink-0" />
               <span>Social Links</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => scrollToSection('admin-bottom-panel', 'stats')}
+              className={`min-h-[40px] px-3.5 rounded-xl text-xs sm:text-sm font-semibold flex items-center gap-2.5 whitespace-nowrap shrink-0 cursor-pointer ${
+                bottomTab === 'stats'
+                  ? 'bg-white/[0.06] text-white'
+                  : 'text-slate-300 hover:text-white hover:bg-white/[0.05]'
+              }`}
+            >
+              <BarChart3 className="w-4 h-4 text-[#F4C867] shrink-0" />
+              <span>Platform Stats</span>
             </button>
           </nav>
 
@@ -878,80 +907,29 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
                   {/* Media Thumbnail Strip */}
                   <div className="flex items-center gap-2 overflow-x-auto pb-1">
-                    {photos.map((url) => {
-                      const isPrimary = card.mediaUrl === url && card.mediaType !== 'video';
-                      return (
-                        <div
-                          key={url}
-                          className={`relative group w-16 h-10 rounded-lg overflow-hidden shrink-0 border transition-all ${
-                            isPrimary
-                              ? 'border-[#F4C867] ring-1 ring-[#F4C867]/60'
-                              : 'border-white/15 hover:border-white/40'
-                          }`}
-                        >
-                          <button
-                            type="button"
-                            onClick={() => handleSetPrimaryMedia(idx, url, 'image')}
-                            title="Set as main card photo"
-                            className="w-full h-full block cursor-pointer"
-                          >
-                            <img
-                              src={url}
-                              alt={`${card.title} upload`}
-                              referrerPolicy="no-referrer"
-                              className="w-full h-full object-cover"
-                            />
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => handleRemoveMediaItem(idx, url, 'image')}
-                            aria-label={`Remove photo from ${card.title}`}
-                            className="absolute top-0.5 right-0.5 w-4 h-4 rounded-full bg-black/75 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity cursor-pointer"
-                          >
-                            <X className="w-2.5 h-2.5" />
-                          </button>
-                        </div>
-                      );
-                    })}
+                    {photos.map((url) => (
+                      <MediaStripThumb
+                        key={url}
+                        mediaUrl={url}
+                        mediaType="image"
+                        title={card.title}
+                        isPrimary={card.mediaUrl === url && card.mediaType !== 'video'}
+                        onSelect={() => handleSetPrimaryMedia(idx, url, 'image')}
+                        onRemove={() => handleRemoveMediaItem(idx, url, 'image')}
+                      />
+                    ))}
 
-                    {videos.map((url) => {
-                      const isPrimary = card.mediaUrl === url && card.mediaType === 'video';
-                      return (
-                        <div
-                          key={url}
-                          className={`relative group w-16 h-10 rounded-lg overflow-hidden shrink-0 border bg-black transition-all ${
-                            isPrimary
-                              ? 'border-[#F4C867] ring-1 ring-[#F4C867]/60'
-                              : 'border-white/15 hover:border-white/40'
-                          }`}
-                        >
-                          <button
-                            type="button"
-                            onClick={() => handleSetPrimaryMedia(idx, url, 'video')}
-                            title="Set as main card video"
-                            className="w-full h-full block relative cursor-pointer"
-                          >
-                            <video
-                              src={url}
-                              muted
-                              playsInline
-                              className="w-full h-full object-cover opacity-85"
-                            />
-                            <span className="absolute bottom-0.5 left-0.5 px-1 rounded bg-black/75 text-[9px] font-bold text-[#F4C867]">
-                              VID
-                            </span>
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => handleRemoveMediaItem(idx, url, 'video')}
-                            aria-label={`Remove video from ${card.title}`}
-                            className="absolute top-0.5 right-0.5 w-4 h-4 rounded-full bg-black/75 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity cursor-pointer"
-                          >
-                            <X className="w-2.5 h-2.5" />
-                          </button>
-                        </div>
-                      );
-                    })}
+                    {videos.map((url) => (
+                      <MediaStripThumb
+                        key={url}
+                        mediaUrl={url}
+                        mediaType="video"
+                        title={card.title}
+                        isPrimary={card.mediaUrl === url && card.mediaType === 'video'}
+                        onSelect={() => handleSetPrimaryMedia(idx, url, 'video')}
+                        onRemove={() => handleRemoveMediaItem(idx, url, 'video')}
+                      />
+                    ))}
 
                     {/* Quick + Add more trigger */}
                     <label className="h-10 px-2.5 rounded-lg border border-dashed border-[#3B4263] hover:border-[#F4C867]/70 text-[11px] font-semibold text-slate-300 hover:text-white flex items-center gap-1 shrink-0 cursor-pointer transition-colors">
@@ -1000,6 +978,18 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 }`}
               >
                 Social Links
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setBottomTab('stats')}
+                className={`min-h-[42px] px-6 rounded-t-xl text-xs sm:text-sm font-bold transition-colors cursor-pointer ${
+                  bottomTab === 'stats'
+                    ? 'bg-[#131626] text-[#F4C867] border-t border-x border-[#2C314D]'
+                    : 'bg-[#25293E]/80 text-slate-300 hover:text-white'
+                }`}
+              >
+                Platform Stats
               </button>
             </div>
 
@@ -1214,6 +1204,234 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                         </div>
                       </div>
                     ))}
+                  </div>
+                </div>
+              )}
+
+              {/* TAB 3: PLATFORM STATS (GLOBAL PLAYERS & DAILY TOURNAMENTS) */}
+              {bottomTab === 'stats' && (
+                <div className="space-y-5">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <h2 className="text-lg sm:text-xl font-extrabold text-white">
+                        Global Players & Daily Tournaments
+                      </h2>
+                      <p className="text-xs text-slate-300/85 mt-0.5">
+                        Manually set the Global Players count and Daily Tournaments count shown in the main app highlights strip.
+                      </p>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() =>
+                        persistConfig(
+                          draft,
+                          'stats',
+                          'Platform stats updated.'
+                        )
+                      }
+                      disabled={savingSection === 'stats'}
+                      className="min-h-[40px] px-4 rounded-xl bg-gradient-to-b from-[#FCE18D] to-[#DC9A2E] text-[#171122] font-extrabold text-xs sm:text-sm flex items-center gap-1.5 shadow-[0_4px_16px_rgba(244,200,103,0.25)] hover:brightness-105 cursor-pointer disabled:opacity-60"
+                    >
+                      <CheckCircle2 className="w-4 h-4" />
+                      <span>
+                        {savingSection === 'stats' ? 'Saving...' : 'Save Stats'}
+                      </span>
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {/* Global Players Card */}
+                    {draft.stats[0] && (
+                      <div className="rounded-xl bg-[#0D101D] border border-[#2C314D] p-4 space-y-3">
+                        <div className="flex items-center gap-2.5">
+                          <div className="w-9 h-9 rounded-lg bg-[#1A1330] border border-[#8B5CF6]/40 flex items-center justify-center text-[#9D5CFF]">
+                            <Users className="w-5 h-5" />
+                          </div>
+                          <div>
+                            <h3 className="text-sm font-bold text-white">
+                              Global Number of Players
+                            </h3>
+                            <p className="text-[11px] text-slate-400">
+                              Displayed on the first highlight card
+                            </p>
+                          </div>
+                        </div>
+
+                        <div>
+                          <label
+                            htmlFor="stat-players-value"
+                            className="block text-xs font-semibold text-slate-300 mb-1"
+                          >
+                            Number of Global Players
+                          </label>
+                          <input
+                            id="stat-players-value"
+                            type="text"
+                            maxLength={20}
+                            value={draft.stats[0].value}
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              setDraft((prev) => {
+                                const next = structuredClone(prev);
+                                if (next.stats[0]) next.stats[0].value = val;
+                                return next;
+                              });
+                              setStatsDirty(true);
+                            }}
+                            placeholder="e.g. 2,500+ or Global"
+                            className="w-full min-h-[42px] rounded-xl bg-[#161A2E] border border-[#353B5B] focus:border-[#F4C867] focus:outline-none px-3.5 text-sm font-bold text-white placeholder:text-slate-500 tabular-nums"
+                          />
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-2.5">
+                          <div>
+                            <label
+                              htmlFor="stat-players-label"
+                              className="block text-[11px] font-semibold text-slate-400 mb-1"
+                            >
+                              Card Label
+                            </label>
+                            <input
+                              id="stat-players-label"
+                              type="text"
+                              maxLength={30}
+                              value={draft.stats[0].label}
+                              onChange={(e) => {
+                                const val = e.target.value;
+                                setDraft((prev) => {
+                                  const next = structuredClone(prev);
+                                  if (next.stats[0]) next.stats[0].label = val;
+                                  return next;
+                                });
+                                setStatsDirty(true);
+                              }}
+                              className="w-full min-h-[38px] rounded-lg bg-[#161A2E] border border-[#353B5B] focus:border-[#F4C867] focus:outline-none px-3 text-xs text-white"
+                            />
+                          </div>
+                          <div>
+                            <label
+                              htmlFor="stat-players-badge"
+                              className="block text-[11px] font-semibold text-slate-400 mb-1"
+                            >
+                              Gold Pill Text
+                            </label>
+                            <input
+                              id="stat-players-badge"
+                              type="text"
+                              maxLength={30}
+                              value={draft.stats[0].badge}
+                              onChange={(e) => {
+                                const val = e.target.value;
+                                setDraft((prev) => {
+                                  const next = structuredClone(prev);
+                                  if (next.stats[0]) next.stats[0].badge = val;
+                                  return next;
+                                });
+                                setStatsDirty(true);
+                              }}
+                              className="w-full min-h-[38px] rounded-lg bg-[#161A2E] border border-[#353B5B] focus:border-[#F4C867] focus:outline-none px-3 text-xs text-white"
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Daily Tournaments Card */}
+                    {draft.stats[1] && (
+                      <div className="rounded-xl bg-[#0D101D] border border-[#2C314D] p-4 space-y-3">
+                        <div className="flex items-center gap-2.5">
+                          <div className="w-9 h-9 rounded-lg bg-[#231B12] border border-[#F4C867]/40 flex items-center justify-center text-[#F4C867]">
+                            <Trophy className="w-5 h-5" />
+                          </div>
+                          <div>
+                            <h3 className="text-sm font-bold text-white">
+                              Number of Daily Tournaments
+                            </h3>
+                            <p className="text-[11px] text-slate-400">
+                              Displayed on the second highlight card
+                            </p>
+                          </div>
+                        </div>
+
+                        <div>
+                          <label
+                            htmlFor="stat-tournaments-value"
+                            className="block text-xs font-semibold text-slate-300 mb-1"
+                          >
+                            Daily Tournaments Count
+                          </label>
+                          <input
+                            id="stat-tournaments-value"
+                            type="text"
+                            maxLength={20}
+                            value={draft.stats[1].value}
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              setDraft((prev) => {
+                                const next = structuredClone(prev);
+                                if (next.stats[1]) next.stats[1].value = val;
+                                return next;
+                              });
+                              setStatsDirty(true);
+                            }}
+                            placeholder="e.g. 25 or Daily"
+                            className="w-full min-h-[42px] rounded-xl bg-[#161A2E] border border-[#353B5B] focus:border-[#F4C867] focus:outline-none px-3.5 text-sm font-bold text-white placeholder:text-slate-500 tabular-nums"
+                          />
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-2.5">
+                          <div>
+                            <label
+                              htmlFor="stat-tournaments-label"
+                              className="block text-[11px] font-semibold text-slate-400 mb-1"
+                            >
+                              Card Label
+                            </label>
+                            <input
+                              id="stat-tournaments-label"
+                              type="text"
+                              maxLength={30}
+                              value={draft.stats[1].label}
+                              onChange={(e) => {
+                                const val = e.target.value;
+                                setDraft((prev) => {
+                                  const next = structuredClone(prev);
+                                  if (next.stats[1]) next.stats[1].label = val;
+                                  return next;
+                                });
+                                setStatsDirty(true);
+                              }}
+                              className="w-full min-h-[38px] rounded-lg bg-[#161A2E] border border-[#353B5B] focus:border-[#F4C867] focus:outline-none px-3 text-xs text-white"
+                            />
+                          </div>
+                          <div>
+                            <label
+                              htmlFor="stat-tournaments-badge"
+                              className="block text-[11px] font-semibold text-slate-400 mb-1"
+                            >
+                              Gold Pill Text
+                            </label>
+                            <input
+                              id="stat-tournaments-badge"
+                              type="text"
+                              maxLength={30}
+                              value={draft.stats[1].badge}
+                              onChange={(e) => {
+                                const val = e.target.value;
+                                setDraft((prev) => {
+                                  const next = structuredClone(prev);
+                                  if (next.stats[1]) next.stats[1].badge = val;
+                                  return next;
+                                });
+                                setStatsDirty(true);
+                              }}
+                              className="w-full min-h-[38px] rounded-lg bg-[#161A2E] border border-[#353B5B] focus:border-[#F4C867] focus:outline-none px-3 text-xs text-white"
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
               )}
